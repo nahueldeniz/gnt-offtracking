@@ -292,32 +292,16 @@ def main():
         est_fac_h = h1["est"] / max(h0["est"], 1e-9)
 
         tex.append(macro("SFiveNarrative", (
-            f"The outcome is reported as found: the vehicle is "
-            f"largely insensitive to all three perturbations, and the \\emph{{estimate}} is not. "
-            f"Increasing the measurement noise eightfold moves the worst segment's off-tracking "
-            f"from \\SI{{{fmt(n0['off'],3)}}}{{\\metre}} to \\SI{{{fmt(n1['off'],3)}}}{{\\metre}}, "
-            f"a change of {fmt(off_pct,0)}\\,\\%, while the position estimation error grows by a "
-            f"factor of {fmt(est_fac,1)}, from \\SI{{{fmt(n0['est'],4)}}}{{\\metre}} to "
-            f"\\SI{{{fmt(n1['est'],4)}}}{{\\metre}}. A "
-            f"{fmt(100*h1['value'],0)}\\,\\% error in the hitch offsets and lengths supplied to "
-            f"the controller and estimator---while the vehicle retains the true values---leaves "
-            f"off-tracking at \\SI{{{fmt(h1['off'],3)}}}{{\\metre}} against "
-            f"\\SI{{{fmt(h0['off'],3)}}}{{\\metre}} nominal, and raises the estimation error by a "
-            f"factor of {fmt(est_fac_h,1)} to \\SI{{{fmt(h1['est'],4)}}}{{\\metre}}. An actuator "
-            f"gain of {fmt(s1_['value'],2)}, that is {fmt(100*(1-s1_['value']),0)}\\,\\% slip on "
-            f"both inputs, gives \\SI{{{fmt(s1_['off'],3)}}}{{\\metre}}. Across every sweep point "
-            f"the off-tracking spans only \\SI{{{fmt(off_span,3)}}}{{\\metre}}.\n\n"
-            f"The explanation is structural rather than fortunate. The tractor's pose is measured "
-            f"directly and the trailers follow it by rigid-body geometry, so the vehicle goes very "
-            f"nearly where it would have gone regardless of what the controller believes; a wrong "
-            f"chain geometry puts the \\emph{{estimated}} trailer positions in the wrong place "
-            f"while the real ones stay on the path. That distinction is operational. If the "
-            f"estimate closes the loop only, parameter error is close to harmless. If it is used "
-            f"to decide whether the vehicle clears an obstacle---the natural next use, and the one "
-            f"the corridor study implies---it is the dominant error source, "
-            f"and the geometry must be calibrated rather than tape-measured. Estimating it online "
-            f"by extending the estimator's decision variables is identified as future work in "
-            f"Section~\\ref{{sec:conclusions}} on that basis.")))
+            f"The vehicle is largely insensitive to all three perturbations, whereas the estimate "
+            f"is not: across every sweep point the off-tracking spans only "
+            f"\\SI{{{fmt(off_span,3)}}}{{\\metre}}, while an eightfold increase of the noise "
+            f"multiplies the position estimation error by {fmt(est_fac,1)} and a "
+            f"{fmt(100*h1['value'],0)}\\,\\% geometry error multiplies it by "
+            f"{fmt(est_fac_h,1)}. The tractor pose is measured and the trailers follow it by "
+            f"rigid-body geometry, so a wrong chain geometry displaces the estimated trailer "
+            f"positions while the real ones stay on the path. Parameter error is therefore nearly "
+            f"harmless when the estimate only closes the loop, but it dominates when the estimate "
+            f"is used to decide clearance, and the geometry must then be calibrated.")))
         tex.append(macro("SFiveOffSpan", fmt(off_span, 3)))
         tex.append(macro("SFiveEstFactor", fmt(est_fac, 1)))
         tex.append(macro("SFiveEstMax", fmt(max(r["est_max"] for r in nz + hz + sl), 3)))
@@ -476,16 +460,15 @@ def main():
         P, A = s9["pos_m"], s9["ang_deg"]
         step = s9.get("sigma_Ts_m", 0.05)
         tex.append(macro("SNineNarrative", (
-            f"On the straight sections its position part has mean "
+            f"On the straight sections the position part has mean "
             f"\\SI{{{fmt(1000*P['straight']['mean'],1)}}}{{\\milli\\metre}} and maximum "
-            f"\\SI{{{fmt(1000*P['straight']['max'],1)}}}{{\\milli\\metre}}, and its angle part "
-            f"a maximum of \\SI{{{fmt(A['straight']['max'],2)}}}{{\\degree}}. In the curved "
-            f"sections, where the path is not attainable, the position part has mean "
-            f"\\SI{{{fmt(1000*P['curved']['mean'],1)}}}{{\\milli\\metre}} and maximum "
-            f"\\SI{{{fmt(1000*P['curved']['max'],1)}}}{{\\milli\\metre}}, and the angle part "
-            f"a maximum of \\SI{{{fmt(A['curved']['max'],2)}}}{{\\degree}}. Against the "
+            f"\\SI{{{fmt(1000*P['straight']['max'],1)}}}{{\\milli\\metre}}, and the angle part "
+            f"is at most \\SI{{{fmt(A['straight']['max'],2)}}}{{\\degree}}; in the headland turns "
+            f"the corresponding values are \\SI{{{fmt(1000*P['curved']['mean'],1)}}}{{\\milli\\metre}}, "
+            f"\\SI{{{fmt(1000*P['curved']['max'],1)}}}{{\\milli\\metre}} and "
+            f"\\SI{{{fmt(A['curved']['max'],2)}}}{{\\degree}}. Against the "
             f"\\SI{{{fmt(1000*step,0)}}}{{\\milli\\metre}} by which the reference progresses "
-            f"in one sampling period, successive references are therefore reachable to within "
+            f"in one sampling period, successive references are reachable to within "
             f"{fmt(100*P['curved']['max']/step,0)}\\,\\% of a step in the worst case and "
             f"{fmt(100*P['straight']['mean']/step,0)}\\,\\% on average along the straight "
             f"sections.")))
