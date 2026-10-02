@@ -100,7 +100,7 @@ class TrackingNMPC:
             "ipopt",
             {"expand": True, "print_time": False},
             {"print_level": print_level, "sb": "yes", "max_iter": 400,
-             "warm_start_init_point": "yes", "acceptable_tol": 1e-6},
+             "warm_start_init_point": "yes", "tol": 1e-6, "acceptable_tol": 1e-6},
         )
         opti.set_value(self.p_Q, ca.DM(self.Q))
         opti.set_value(self.p_QN, ca.DM(self.QN))

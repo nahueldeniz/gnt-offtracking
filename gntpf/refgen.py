@@ -233,7 +233,7 @@ class ReferenceGenerator:
             "ipopt",
             {"expand": True, "print_time": False},
             {"print_level": print_level, "sb": "yes", "max_iter": 500,
-             "warm_start_init_point": "yes", "acceptable_tol": 1e-6},
+             "warm_start_init_point": "yes", "tol": 1e-6, "acceptable_tol": 1e-6},
         )
 
         self.set_weights(self.weights)

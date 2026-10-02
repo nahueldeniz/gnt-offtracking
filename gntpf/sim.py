@@ -95,48 +95,72 @@ class SimResult:
     sdev: np.ndarray = None      # signed lateral offset, positive to the left
     curved: np.ndarray = None    # boolean mask: tractor in a curved section
     reach: np.ndarray = None     # reachability residual e_r of the generator, nq x K
+    seg_mask: np.ndarray = None  # (N+1) x K: segment i inside the evaluation span
+    seg_curved: np.ndarray = None  # (N+1) x K: segment i on a curved section of the path
     fails: dict = field(default_factory=dict)
     meta: dict = field(default_factory=dict)
+
+    # ------------------------------------------------------------- masks
+    def masks(self, skip: float = 0.15):
+        """Which samples of each segment are evaluated, and which are curved.
+
+        A path built with a lead-in carries an evaluation span; a sample of
+        segment ``i`` is then evaluated when that segment's own projection lies
+        inside the span, so every segment, the last trailer included, is judged
+        over the same stretch of path.  Without a span the first ``skip`` of the
+        run is discarded as transient and curvature is taken at the tractor.
+        """
+        n_seg, K = self.dev.shape
+        span = self.meta.get("eval_span") if self.meta else None
+        if self.seg_mask is not None and span is not None and span[0] > 0:
+            M = self.seg_mask.copy()
+            C = M & self.seg_curved
+        else:
+            k0 = int(skip * K)
+            M = np.zeros((n_seg, K), bool)
+            M[:, k0:] = True
+            c = self.curved if self.curved is not None else np.zeros(K, bool)
+            C = M & c[None, :]
+        return M, C
 
     # --------------------------------------------------------------- corridor
     def corridor(self, skip: float = 0.15) -> dict:
         """Width of the lane the whole vehicle sweeps.
 
-        This is the quantity that decides whether the vehicle fits: the span
-        between the left-most and right-most excursion of any segment, taken over
-        the run.  It is reported both overall and restricted to curved sections.
+        The span between the left-most and right-most excursion of any segment,
+        over the evaluated samples, overall and restricted to curved sections.
         """
         if self.sdev is None:
             return {}
-        k0 = int(skip * self.t.size)
-        d = self.sdev[:, k0:]
-        out = {"corridor_width": float(d.max() - d.min()),
-               "corridor_left": float(d.max()), "corridor_right": float(d.min())}
-        c = self.curved[k0:] if self.curved is not None else None
-        dc = d[:, c] if (c is not None and c.any()) else d
+        M, C = self.masks(skip)
+        d = self.sdev
+        dm = d[M] if M.any() else d.ravel()
+        out = {"corridor_width": float(dm.max() - dm.min()),
+               "corridor_left": float(dm.max()), "corridor_right": float(dm.min())}
+        dc = d[C] if C.any() else dm
         out["corridor_width_curved"] = float(dc.max() - dc.min())
         return out
 
     # ---------------------------------------------------------------- summary
     def reach_summary(self, skip: float = 0.15) -> dict:
-        """Size of the reachability residual e_r of Eq. (11), after the transient.
+        """Size of the reachability residual e_r of Eq. (11) over the evaluated run.
 
         At each instant the residual is split into its position part, the
         largest Euclidean residual over the segment positions (m), and its angle
         part, the largest residual over the joint angles and headings (deg).
-        Each is summarised overall, on the curved sections and on the straight
-        ones, so that the residual can be compared with where the path is and is
-        not attainable.
+        Each is summarised overall, where some segment is on a curved section,
+        and where none is.
         """
         if self.reach is None:
             return {}
         N = self.meta["N"]
-        k0 = int(skip * self.reach.shape[1])
-        R = self.reach[:, k0:]
+        M, C = self.masks(skip)
+        k_eval = M[0]
+        curved = C.any(axis=0)
+        R = self.reach
         pos = np.stack([np.hypot(R[2 * N + 1 + 2 * i], R[2 * N + 2 + 2 * i])
                         for i in range(N + 1)]).max(axis=0)
         ang = np.degrees(np.abs(R[:2 * N + 1]).max(axis=0))
-        c = self.curved[k0:] if self.curved is not None else np.zeros(pos.size, bool)
 
         def stats(x):
             x = x[np.isfinite(x)]
@@ -145,44 +169,53 @@ class SimResult:
             return {"mean": float(x.mean()), "p95": float(np.percentile(x, 95)),
                     "max": float(x.max())}
 
-        return {"pos_m": {"all": stats(pos), "curved": stats(pos[c]), "straight": stats(pos[~c])},
-                "ang_deg": {"all": stats(ang), "curved": stats(ang[c]), "straight": stats(ang[~c])}}
+        a, c, st = k_eval, k_eval & curved, k_eval & ~curved
+        return {"pos_m": {"all": stats(pos[a]), "curved": stats(pos[c]), "straight": stats(pos[st])},
+                "ang_deg": {"all": stats(ang[a]), "curved": stats(ang[c]), "straight": stats(ang[st])}}
 
     def summary(self, skip: float = 0.15) -> dict:
-        """Aggregate metrics, discarding the initial transient."""
-        k0 = int(skip * self.t.size)
-        d = self.dev[:, k0:]
-        # Curved-section metrics always exist; when the run contains no curved
-        # section they fall back to the whole run and say so, so that callers
-        # never have to branch on whether the key is present.
-        c = self.curved[k0:] if self.curved is not None else None
-        if c is not None and c.any():
-            dc, frac = d[:, c], float(c.mean())
+        """Aggregate metrics over the evaluated samples of each segment."""
+        M, C = self.masks(skip)
+        n_seg = self.dev.shape[0]
+
+        def per_seg(x, mask, fn):
+            return np.array([fn(x[i, mask[i]]) if mask[i].any() else np.nan
+                             for i in range(n_seg)])
+
+        mean_dev = per_seg(self.dev, M, np.mean)
+        max_dev = per_seg(self.dev, M, np.max)
+        rms_dev = per_seg(self.dev, M, lambda v: np.sqrt(np.mean(v ** 2)))
+        if C.any():
+            mean_c = per_seg(self.dev, C, np.mean)
+            max_c = per_seg(self.dev, C, np.max)
+            frac = float(C[0].sum() / max(M[0].sum(), 1))
         else:
-            dc, frac = d, 0.0
-        out_curved = {
-            "mean_dev_curved": dc.mean(axis=1),
-            "max_dev_curved": dc.max(axis=1),
-            "worst_curved": float(dc.mean(axis=1).max()),
-            "curved_fraction": frac,
-        }
+            mean_c, max_c, frac = mean_dev, max_dev, 0.0
+        k = M[0]
+        tt = self.t_ref + self.t_mpc + self.t_mhe
+        est = self.est_err[M] if M.any() else self.est_err.ravel()
         return {
-            "mean_dev": d.mean(axis=1),
-            "max_dev": d.max(axis=1),
-            "rms_dev": np.sqrt((d**2).mean(axis=1)),
-            "mean_dev_all": float(d.mean()),
-            "mean_dev_last": float(d[-1].mean()),
-            "max_dev_last": float(d[-1].max()),
-            "worst_segment": float(d.mean(axis=1).max()),
-            "worst_segment_max": float(d.max(axis=1).max()),
-            **out_curved,
-            "t_ref_ms": float(np.nanmean(self.t_ref[k0:]) * 1e3),
-            "t_mpc_ms": float(np.nanmean(self.t_mpc[k0:]) * 1e3),
-            "t_mhe_ms": float(np.nanmean(self.t_mhe[k0:]) * 1e3),
-            "t_total_ms": float(np.nanmean(self.t_ref[k0:] + self.t_mpc[k0:] + self.t_mhe[k0:]) * 1e3),
-            "t_total_p95_ms": float(np.nanpercentile(self.t_ref[k0:] + self.t_mpc[k0:] + self.t_mhe[k0:], 95) * 1e3),
-            "est_err_mean": float(np.nanmean(self.est_err[:, k0:])),
-            "est_err_max": float(np.nanmax(self.est_err[:, k0:])),
+            "mean_dev": mean_dev,
+            "max_dev": max_dev,
+            "rms_dev": rms_dev,
+            "mean_dev_all": float(self.dev[M].mean()) if M.any() else float("nan"),
+            "mean_dev_last": float(mean_dev[-1]),
+            "max_dev_last": float(max_dev[-1]),
+            "worst_segment": float(np.nanmax(mean_dev)),
+            "worst_segment_max": float(np.nanmax(max_dev)),
+            "mean_dev_curved": mean_c,
+            "max_dev_curved": max_c,
+            "worst_curved": float(np.nanmax(mean_c)),
+            "curved_fraction": frac,
+            "t_ref_ms": float(np.nanmean(self.t_ref[k]) * 1e3),
+            "t_mpc_ms": float(np.nanmean(self.t_mpc[k]) * 1e3),
+            "t_mhe_ms": float(np.nanmean(self.t_mhe[k]) * 1e3),
+            "t_total_ms": float(np.nanmean(tt[k]) * 1e3),
+            "t_total_p95_ms": float(np.nanpercentile(tt[k], 95) * 1e3),
+            "est_err_mean": float(np.nanmean(est)),
+            "est_err_max": float(np.nanmax(est)),
+            "completed": bool(not self.meta.get("diverged", False)),
+            "progress": float(self.meta.get("progress", 1.0)),
             **self.corridor(skip),
             **self.fails,
         }
@@ -191,6 +224,49 @@ class SimResult:
 # --------------------------------------------------------------------------- #
 #  Helpers
 # --------------------------------------------------------------------------- #
+# A run is declared diverged when the tractor falls more than this many vehicle
+# lengths behind the progress point and stays there for this long: the vehicle
+# has lost its reference, and whatever deviation it accumulates afterwards is not
+# a path-following result.
+DIVERGE_LAG_LENGTHS = 2.0
+DIVERGE_HOLD_S = 5.0
+
+
+class Watchdog:
+    """Detects a run in which the vehicle has lost its reference."""
+
+    def __init__(self, model: GNT, Ts: float):
+        self.limit = DIVERGE_LAG_LENGTHS * model.total_length
+        self.hold = max(int(round(DIVERGE_HOLD_S / Ts)), 1)
+        self.count = 0
+        self.t_diverged = None
+
+    def update(self, k: int, Ts: float, s_v: float, s_tractor: float) -> bool:
+        self.count = self.count + 1 if (s_v - s_tractor) > self.limit else 0
+        if self.count >= self.hold and self.t_diverged is None:
+            self.t_diverged = (k - self.hold + 1) * Ts
+        return self.t_diverged is not None
+
+
+def evaluation_masks(path: Path, s_proj, k_threshold: float = 0.15):
+    """Per-segment masks: inside the evaluation span, and on a curved section."""
+    S = np.asarray(s_proj, dtype=float)
+    mask = (S >= path.eval_start) & (S <= path.eval_end)
+    curved = path.curved_mask(S.ravel(), k_threshold).reshape(S.shape)
+    return mask, curved
+
+
+def run_meta(path: Path, s_proj, watchdog: Watchdog) -> dict:
+    """Evaluation span, divergence, and how much of the span the last trailer covered."""
+    S = np.asarray(s_proj, dtype=float)
+    span = path.eval_end - path.eval_start
+    reached = float(np.nanmax(S[-1])) if S.size else path.eval_start
+    prog = float(np.clip((reached - path.eval_start) / span, 0.0, 1.0)) if span > 0 else 1.0
+    return {"eval_span": (path.eval_start, path.eval_end),
+            "diverged": watchdog.t_diverged is not None,
+            "t_diverged": watchdog.t_diverged, "progress": prog}
+
+
 def initial_state_on_path(model: GNT, path: Path, s0: float, jitter=0.0, rng=None) -> np.ndarray:
     """A consistent initial configuration with the vehicle laid out along the path.
 
@@ -289,6 +365,7 @@ def simulate(
     fails = {"ref_fail": 0, "mpc_fail": 0, "mhe_fail": 0}
     u_last = np.zeros(model.nu)
     s_proj = np.full(N + 1, s_v)
+    watchdog = Watchdog(model, Ts)
 
     for k in range(K):
         # ---------------------------------------------------------- sensing
@@ -350,6 +427,10 @@ def simulate(
         rec["tmhe"].append(t_mhe)
         rec["lam"].append(lam.copy())
         rec["sproj"].append(s_proj.copy())
+        if watchdog.update(k, Ts, s_v, s_proj[0]):
+            e_r = getattr(refgen, "last_e_r", None)
+            rec["reach"].append(np.full(model.nq, np.nan) if e_r is None else e_r.copy())
+            break
         e_r = getattr(refgen, "last_e_r", None)
         rec["reach"].append(np.full(model.nq, np.nan) if e_r is None else e_r.copy())
 
@@ -374,8 +455,11 @@ def simulate(
         lam=A("lam"), s_proj=A("sproj"),
         curved=path.curved_mask(np.array(rec["sproj"])[:, 0]),
         reach=A("reach"),
+        seg_mask=evaluation_masks(path, A("sproj"))[0],
+        seg_curved=evaluation_masks(path, A("sproj"))[1],
         fails=fails,
-        meta={"N": N, "path": path.name, "hitching": model.hitching,
+        meta={**run_meta(path, A("sproj"), watchdog),
+              "N": N, "path": path.name, "hitching": model.hitching,
               "n_var_ref": refgen.n_var, "n_con_ref": refgen.n_con,
               "n_var_mpc": nmpc.n_var, "n_con_mpc": nmpc.n_con,
               "n_var_mhe": getattr(estimator, "n_var", None),

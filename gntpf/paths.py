@@ -62,55 +62,44 @@ def _rounded_rect(n=6000, w=16.0, h=10.0, r=1.2, cx=0.0, cy=0.0):
     return xy + np.array([[cx], [cy]])
 
 
-def _omega_turn(p1, h1, p2, h2, r, side, ds=0.002):
+def _omega_turn(p1, h1, p2, h2, r, ds=0.002):
     """Three-arc omega ("bulb") headland turn between two antiparallel rows.
 
-    A single arc of radius ``r`` cannot be tangent to both rows when their
-    spacing is less than ``2r``: the perpendicular bisector forces a centre from
-    which neither row direction is perpendicular, so the joins become corners.
-    The turn used in practice is therefore three arcs -- swing away from the next
-    row, loop round, and come back in -- which is what this builds.
-
-    ``side`` is +1 or -1 and selects which way the vehicle first swings.  The
-    result is tangent-continuous with both rows by construction.
+    A single arc of radius ``r`` cannot join two rows whose spacing is less than
+    ``2r``.  The omega turn swings away from the next row, loops round in the
+    headland, and comes back into the next row: three tangent arcs of radius
+    ``r``, the outer two turning one way and the middle one the other, with a net
+    change of heading of 180 degrees.  The whole turn lies in the headland,
+    beyond the ends of the rows, and is tangent-continuous with both rows.
     """
-    def rot(v, s):
-        return np.array([-s * v[1], s * v[0]])
-
     p1, p2 = np.asarray(p1, float), np.asarray(p2, float)
     h1, h2 = np.asarray(h1, float), np.asarray(h2, float)
-    cA = p1 + r * rot(h1, side)          # first arc: turn away from the next row
-    cC = p2 + r * rot(h2, side)          # last arc: same sense, ends on the row
-    mid, dv = 0.5 * (cA + cC), cC - cA
-    dist = float(np.linalg.norm(dv))
-    if dist > 4 * r:
-        raise ValueError("omega turn needs the row spacing below 4r")
-    half = np.sqrt(max((2 * r) ** 2 - (dist / 2) ** 2, 0.0))
-    nrm = np.array([-dv[1], dv[0]]) / max(dist, 1e-12)
-    cB = mid - side * half * nrm         # middle arc, opposite sense, loops away
-
-    def arc(c, a0, a1, sense):
-        n = max(int(abs(a1 - a0) * r / ds), 2)
-        a = np.linspace(a0, a1, n)
-        return np.vstack([c[0] + r * np.cos(a), c[1] + r * np.sin(a)])
+    left = lambda h: np.array([-h[1], h[0]])            # left normal of a heading
+    e = p2 - p1
+    s = -1.0 if float(e @ left(h1)) > 0 else 1.0        # first turn away from the next row
+    cA = p1 + r * s * left(h1)                           # outer arcs: sense s
+    cC = p2 + r * s * left(h2)
+    mid, dist = 0.5 * (cA + cC), float(np.linalg.norm(cC - cA))
+    if dist >= 4 * r:
+        raise ValueError("omega turn needs the row spacing below 2r")
+    half = np.sqrt((2 * r) ** 2 - (dist / 2) ** 2)
+    cB = mid + half * h1                                 # middle arc: in the headland
 
     def ang(v):
         return float(np.arctan2(v[1], v[0]))
 
-    tAB = cA + r * (cB - cA) / (2 * r)   # tangent point between arcs A and B
-    tBC = cC + r * (cB - cC) / (2 * r)
-
-    def sweep(a0, a1, sense):
-        """Signed sweep from ``a0`` to ``a1`` in the given rotational sense."""
+    def arc(c, a0, a1, sense):
         d = (a1 - a0) % (2 * np.pi)
-        return d if sense > 0 else d - 2 * np.pi
+        sweep = d if sense > 0 else d - 2 * np.pi
+        n = max(int(abs(sweep) * r / ds), 2)
+        a = np.linspace(a0, a0 + sweep, n)
+        return np.vstack([c[0] + r * np.cos(a), c[1] + r * np.sin(a)])
 
-    aA0, aA1 = ang(p1 - cA), ang(tAB - cA)
-    segA = arc(cA, aA0, aA0 + sweep(aA0, aA1, side), side)
-    aB0, aB1 = ang(tAB - cB), ang(tBC - cB)
-    segB = arc(cB, aB0, aB0 + sweep(aB0, aB1, -side), -side)
-    aC0, aC1 = ang(tBC - cC), ang(p2 - cC)
-    segC = arc(cC, aC0, aC0 + sweep(aC0, aC1, side), side)
+    tAB = 0.5 * (cA + cB)                                # tangent points
+    tBC = 0.5 * (cB + cC)
+    segA = arc(cA, ang(p1 - cA), ang(tAB - cA), s)
+    segB = arc(cB, ang(tAB - cB), ang(tBC - cB), -s)
+    segC = arc(cC, ang(tBC - cC), ang(p2 - cC), s)
     return np.hstack([segA, segB[:, 1:], segC[:, 1:]])
 
 
@@ -137,7 +126,7 @@ def _agricultural(r=2.0, l=7.0, d=1.5, delta=0.002, rows=5):
         h1 = np.array([0.0, 1.0]) if up else np.array([0.0, -1.0])
         p1 = segs[-1][:, -1]
         p2 = np.array([p1[0] + d, p1[1]])
-        turn = _omega_turn(p1, h1, p2, -h1, r, side=-1, ds=delta)
+        turn = _omega_turn(p1, h1, p2, -h1, r, ds=delta)
         segs.append(turn[:, 1:])
         p = segs[-1][:, -1]
         y = (np.arange(p[1], -delta, -delta) if up
@@ -176,10 +165,61 @@ PATHS = {
 }
 
 
-def make_path(name: str, **kw) -> "Path":
+# Paths that close on themselves and can therefore be traversed several times.
+CLOSED_PATHS = {"circle", "lemniscate", "square", "rounded_rect"}
+
+
+def _arc_length(xy):
+    return np.concatenate([[0.0], np.cumsum(np.hypot(*np.diff(xy, axis=1)))])
+
+
+def _straight(p, direction, length, ds=0.01):
+    """Points from ``p`` along the unit ``direction`` for ``length`` metres, excluding ``p``."""
+    n = max(int(np.ceil(length / ds)), 1)
+    t = np.linspace(0.0, length, n + 1)[1:]
+    return p[:, None] + direction[:, None] * t[None, :]
+
+
+def make_path(name: str, laps: int = 1, lead: float = 0.0, runout: float = 0.0,
+              **kw) -> "Path":
+    """Build a named path.
+
+    ``laps`` repeats a closed path; ``lead`` prepends a straight approach along the
+    initial tangent; ``runout`` extends the path after its end -- the beginning of
+    the next lap for a closed path, a straight along the final tangent otherwise.
+    The evaluation span of the returned path is the nominal part, ``laps`` laps
+    long, between the lead-in and the run-out.
+    """
     if name not in PATHS:
         raise KeyError(f"unknown path {name!r}; available: {sorted(PATHS)}")
-    return Path(PATHS[name](**kw), name=name)
+    xy = np.asarray(PATHS[name](**kw), dtype=float)
+    closed = name in CLOSED_PATHS
+    if laps > 1 and not closed:
+        raise ValueError(f"path {name!r} is open and cannot be traversed {laps} times")
+    if closed and np.hypot(*(xy[:, -1] - xy[:, 0])) < 1e-9:
+        loop = xy[:, :-1]                    # drop the closing duplicate
+    else:
+        loop = xy
+    body = np.hstack([loop] * laps + ([xy[:, :1]] if closed else []))
+    nominal = float(_arc_length(body)[-1])
+
+    parts = []
+    if lead > 0:
+        d0 = body[:, 1] - body[:, 0]
+        d0 = d0 / np.linalg.norm(d0)
+        parts.append(_straight(body[:, 0], -d0, lead)[:, ::-1])
+    parts.append(body)
+    if runout > 0:
+        if closed:
+            s_loop = _arc_length(loop)
+            k = int(np.searchsorted(s_loop, runout)) + 1
+            parts.append(loop[:, 1:k + 1])
+        else:
+            d1 = body[:, -1] - body[:, -2]
+            d1 = d1 / np.linalg.norm(d1)
+            parts.append(_straight(body[:, -1], d1, runout))
+    full = np.hstack(parts)
+    return Path(full, name=name, eval_start=lead, eval_end=lead + nominal)
 
 
 # --------------------------------------------------------------------------- #
@@ -215,7 +255,8 @@ class LocalFit:
 class Path:
     """A dense nominal path with arc-length bookkeeping and windowed refitting."""
 
-    def __init__(self, xy: np.ndarray, name: str = "path"):
+    def __init__(self, xy: np.ndarray, name: str = "path",
+                 eval_start: float = 0.0, eval_end: float | None = None):
         self.xy = np.asarray(xy, dtype=float)
         if self.xy.shape[0] != 2:
             raise ValueError("path coordinates must be a 2 x M array")
@@ -231,6 +272,11 @@ class Path:
         seg = np.hypot(d[0], d[1])
         self.s = np.concatenate([[0.0], np.cumsum(seg)])
         self.length = float(self.s[-1])
+        # Arc-length span over which a run is evaluated.  A lead-in before it
+        # absorbs the start-up transient, and a run-out after it lets the last
+        # trailer finish the span before the progress point reaches the end.
+        self.eval_start = float(eval_start)
+        self.eval_end = self.length if eval_end is None else float(min(eval_end, self.length))
 
     # ------------------------------------------------------------------ utils
     def at(self, s):

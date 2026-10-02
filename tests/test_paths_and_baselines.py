@@ -35,11 +35,26 @@ def test_agricultural_curvature_is_bounded_by_turn_radius():
     assert p.curvature().max() == pytest.approx(0.5, abs=5e-3)
 
 
-def test_agricultural_rows_and_turns():
-    """Five rows means four turns, and the path should be mostly curved."""
+def test_agricultural_rows_and_omega_turns():
+    """Five rows of 7 m joined by four omega turns of radius 2 m at 1.5 m spacing:
+    each turn is three tangent arcs, r (pi + 4 phi) long."""
+    r, l, d = 2.0, 7.0, 1.5
+    phi = np.arctan2(np.sqrt(4 * r**2 - (d / 2 + r) ** 2), d / 2 + r)
     p = make_path("agricultural")
-    assert 100.0 < p.length < 160.0
-    assert 0.5 < (p.curvature() > 0.15).mean() < 0.9
+    assert p.length == pytest.approx(5 * l + 4 * r * (np.pi + 4 * phi), abs=0.02)
+    assert np.max(np.abs(p.curvature())) == pytest.approx(1.0 / r, rel=0.01)
+
+
+@pytest.mark.parametrize("h", [(0.0, 1.0), (0.0, -1.0)])
+def test_omega_turn_reverses_heading_inside_the_headland(h):
+    from gntpf.paths import _omega_turn
+    p1, p2, h1 = np.array([0.0, 0.0]), np.array([1.5, 0.0]), np.array(h)
+    t = _omega_turn(p1, h1, p2, -h1, 2.0, ds=0.002)
+    dxy = np.diff(t, axis=1)
+    th = np.unwrap(np.arctan2(dxy[1], dxy[0]))
+    assert abs(th[-1] - th[0]) == pytest.approx(np.pi, abs=0.01)     # a half turn, not more
+    assert np.min((t - p1[:, None]).T @ h1) > -1e-9                  # never re-enters the field
+    assert np.allclose(t[:, -1], p2, atol=1e-6)                       # ends on the next row
 
 
 def test_signed_deviation_has_a_sign():

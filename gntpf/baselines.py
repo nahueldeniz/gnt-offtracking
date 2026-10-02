@@ -41,7 +41,8 @@ import numpy as np
 from .model import GNT, atan2c, wrap_to_pi
 from .nmhe import NMHE
 from .paths import Path
-from .sim import SensorModel, SimConfig, SimResult, initial_state_on_path
+from .sim import (SensorModel, SimConfig, SimResult, Watchdog, evaluation_masks,
+                  initial_state_on_path, run_meta)
 
 __all__ = ["PurePursuit", "MichalekCascade", "simulate_baseline", "chain_condition",
            "scale_to_bounds", "steady_state_betas", "settled_state_on_path",
@@ -411,6 +412,7 @@ def simulate_baseline(
     fails = {"ref_fail": 0, "mpc_fail": 0, "mhe_fail": 0}
     u_last = np.zeros(model.nu)
     s_proj = np.full(N + 1, s_v)
+    watchdog = Watchdog(model, Ts)
 
     for k in range(K):
         if estimator is None:
@@ -462,6 +464,8 @@ def simulate_baseline(
         rec["tmhe"].append(t_mhe)
         rec["lam"].append(np.zeros(N + 1))
         rec["sproj"].append(s_proj.copy())
+        if watchdog.update(k, Ts, s_v, s_proj[0]):
+            break
 
         q_true = model.step(q_true, u_app)
         if cfg.process_noise:
@@ -484,8 +488,11 @@ def simulate_baseline(
         t_ref=np.array(rec["tref"]), t_mpc=np.array(rec["tmpc"]), t_mhe=np.array(rec["tmhe"]),
         lam=A("lam"), s_proj=A("sproj"),
         curved=path.curved_mask(np.array(rec["sproj"])[:, 0]),
+        seg_mask=evaluation_masks(path, np.array(rec["sproj"]).T)[0],
+        seg_curved=evaluation_masks(path, np.array(rec["sproj"]).T)[1],
         fails=fails,
-        meta={"N": N, "path": path.name, "hitching": model.hitching,
+        meta={**run_meta(path, np.array(rec["sproj"]).T, watchdog),
+              "N": N, "path": path.name, "hitching": model.hitching,
               "controller": getattr(controller, "name", type(controller).__name__),
               "chain_condition": chain_condition(model),
               "n_var_ref": 0, "n_con_ref": 0, "n_var_mpc": 0, "n_con_mpc": 0,
@@ -561,6 +568,7 @@ def simulate_with_reference(
     fails = {"ref_fail": 0, "mpc_fail": 0, "mhe_fail": 0}
     u_last = np.zeros(model.nu)
     s_proj = np.full(N + 1, s_v)
+    watchdog = Watchdog(model, Ts)
 
     for k in range(K):
         if estimator is None:
@@ -604,6 +612,9 @@ def simulate_with_reference(
         rec["tmhe"].append(t_mhe)
         rec["lam"].append(np.zeros(N + 1))
         rec["sproj"].append(s_proj.copy())
+        # here the progress point indexes the last trailer, whose reference it sets
+        if watchdog.update(k, Ts, s_v, s_proj[-1]):
+            break
 
         q_true = model.step(q_true, u_app)
         q_true[model.i_beta] = wrap_to_pi(q_true[model.i_beta])
@@ -623,8 +634,11 @@ def simulate_with_reference(
         t_ref=np.array(rec["tref"]), t_mpc=np.array(rec["tmpc"]), t_mhe=np.array(rec["tmhe"]),
         lam=A("lam"), s_proj=A("sproj"),
         curved=path.curved_mask(np.array(rec["sproj"])[:, 0]),
+        seg_mask=evaluation_masks(path, np.array(rec["sproj"]).T)[0],
+        seg_curved=evaluation_masks(path, np.array(rec["sproj"]).T)[1],
         fails=fails,
-        meta={"N": N, "path": path.name, "hitching": model.hitching, "controller": label,
+        meta={**run_meta(path, np.array(rec["sproj"]).T, watchdog),
+              "N": N, "path": path.name, "hitching": model.hitching, "controller": label,
               "n_var_ref": 0, "n_con_ref": 0,
               "n_var_mpc": nmpc.n_var, "n_con_mpc": nmpc.n_con,
               "n_var_mhe": getattr(estimator, "n_var", None) if estimator is not None else None,
