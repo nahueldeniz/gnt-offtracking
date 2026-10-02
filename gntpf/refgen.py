@@ -298,6 +298,9 @@ class ReferenceGenerator:
             q = np.asarray(sol.value(self.v_q)).reshape(-1)
             s = np.asarray(sol.value(self.v_s)).reshape(-1)
             cost = float(sol.value(self.J))
+            # e_r of the paper: how far the new reference is from a configuration
+            # reachable in one sampling period from the previous one.
+            self.last_e_r = np.asarray(sol.value(self.w_prop)).reshape(-1)
             ok = True
         except RuntimeError:
             # Keep the last feasible reference rather than aborting the run; the
@@ -305,6 +308,7 @@ class ReferenceGenerator:
             q = o.debug.value(self.v_q)
             q = np.asarray(q).reshape(-1)
             s = np.asarray(o.debug.value(self.v_s)).reshape(-1)
+            self.last_e_r = np.asarray(o.debug.value(self.w_prop)).reshape(-1)
             cost = float("nan")
             ok = False
 

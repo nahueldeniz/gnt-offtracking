@@ -470,6 +470,29 @@ def main():
             tex.append(macro(nme, PENDING("S8") if nme.endswith("Narrative") else "--"))
         notes.append("s8 missing")
 
+    # ------------------------------------------------------------------- S9
+    s9 = load("s9_reachability")
+    if s9:
+        P, A = s9["pos_m"], s9["ang_deg"]
+        step = s9.get("sigma_Ts_m", 0.05)
+        tex.append(macro("SNineNarrative", (
+            f"On the straight sections its position part has mean "
+            f"\\SI{{{fmt(1000*P['straight']['mean'],1)}}}{{\\milli\\metre}} and maximum "
+            f"\\SI{{{fmt(1000*P['straight']['max'],1)}}}{{\\milli\\metre}}, and its angle part "
+            f"a maximum of \\SI{{{fmt(A['straight']['max'],2)}}}{{\\degree}}. In the curved "
+            f"sections, where the path is not attainable, the position part has mean "
+            f"\\SI{{{fmt(1000*P['curved']['mean'],1)}}}{{\\milli\\metre}} and maximum "
+            f"\\SI{{{fmt(1000*P['curved']['max'],1)}}}{{\\milli\\metre}}, and the angle part "
+            f"a maximum of \\SI{{{fmt(A['curved']['max'],2)}}}{{\\degree}}. Against the "
+            f"\\SI{{{fmt(1000*step,0)}}}{{\\milli\\metre}} by which the reference progresses "
+            f"in one sampling period, successive references are therefore reachable to within "
+            f"{fmt(100*P['curved']['max']/step,0)}\\,\\% of a step in the worst case and "
+            f"{fmt(100*P['straight']['mean']/step,0)}\\,\\% on average along the straight "
+            f"sections.")))
+    else:
+        tex.append(macro("SNineNarrative", PENDING("S9")))
+        notes.append("s9 missing")
+
     # ------------------------------------------------------------------- S7
     s7 = load("s7_varying_n")
     if s7:

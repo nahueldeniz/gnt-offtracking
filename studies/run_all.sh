@@ -5,7 +5,7 @@ cd "$(dirname "$0")"
 export PYTHONPATH="$(cd .. && pwd)"
 export OMP_NUM_THREADS=1
 
-STUDIES="${@:-verification s4_scaling s3_inputs s1_baseline s2_estimator s6_corridor_design s7_varying_n s8_comparison s5_robustness}"
+STUDIES="${@:-verification s4_scaling s3_inputs s1_baseline s2_estimator s6_corridor_design s7_varying_n s8_comparison s5_robustness s9_reachability}"
 
 for s in $STUDIES; do
   echo "=============== $s  ($(date +%H:%M:%S)) ==============="

@@ -27,6 +27,7 @@ run () {  # run <script> <jobs>
 run verification 1
 run s5_robustness "$JOBS"
 run s6_corridor_design "$JOBS"
+run s9_reachability "$JOBS"
 run s1_baseline 1
 run s2_estimator 1
 run s3_inputs 1

@@ -97,6 +97,7 @@ lists them per study, with expected timings.
 | `s6_corridor_design.py` | How wide a corridor does the vehicle need, and how far can the weighting move it? |
 | `s7_varying_n.py` | What happens when trailers are detached mid-run? |
 | `s8_comparison.py` | How does the method compare with the reconstruction of Michalek & Pazderski (EJC 2021), and with pure pursuit? |
+| `s9_reachability.py` | How large is the reachability residual $e_r$ of Eq. (11) -- how close is each reference to a configuration reachable from the previous one? |
 | `verification.py` | What are the measured model-verification residuals quoted in the paper? |
 
 The field studies (`field_analysis.py`, `field_report.py`, `field_figures.py`,

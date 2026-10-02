@@ -94,6 +94,7 @@ class SimResult:
     s_proj: np.ndarray = None    # arc length of each segment's projection
     sdev: np.ndarray = None      # signed lateral offset, positive to the left
     curved: np.ndarray = None    # boolean mask: tractor in a curved section
+    reach: np.ndarray = None     # reachability residual e_r of the generator, nq x K
     fails: dict = field(default_factory=dict)
     meta: dict = field(default_factory=dict)
 
@@ -117,6 +118,36 @@ class SimResult:
         return out
 
     # ---------------------------------------------------------------- summary
+    def reach_summary(self, skip: float = 0.15) -> dict:
+        """Size of the reachability residual e_r of Eq. (11), after the transient.
+
+        At each instant the residual is split into its position part, the
+        largest Euclidean residual over the segment positions (m), and its angle
+        part, the largest residual over the joint angles and headings (deg).
+        Each is summarised overall, on the curved sections and on the straight
+        ones, so that the residual can be compared with where the path is and is
+        not attainable.
+        """
+        if self.reach is None:
+            return {}
+        N = self.meta["N"]
+        k0 = int(skip * self.reach.shape[1])
+        R = self.reach[:, k0:]
+        pos = np.stack([np.hypot(R[2 * N + 1 + 2 * i], R[2 * N + 2 + 2 * i])
+                        for i in range(N + 1)]).max(axis=0)
+        ang = np.degrees(np.abs(R[:2 * N + 1]).max(axis=0))
+        c = self.curved[k0:] if self.curved is not None else np.zeros(pos.size, bool)
+
+        def stats(x):
+            x = x[np.isfinite(x)]
+            if x.size == 0:
+                return {"mean": float("nan"), "p95": float("nan"), "max": float("nan")}
+            return {"mean": float(x.mean()), "p95": float(np.percentile(x, 95)),
+                    "max": float(x.max())}
+
+        return {"pos_m": {"all": stats(pos), "curved": stats(pos[c]), "straight": stats(pos[~c])},
+                "ang_deg": {"all": stats(ang), "curved": stats(ang[c]), "straight": stats(ang[~c])}}
+
     def summary(self, skip: float = 0.15) -> dict:
         """Aggregate metrics, discarding the initial transient."""
         k0 = int(skip * self.t.size)
@@ -254,7 +285,7 @@ def simulate(
 
     K = int(cfg.t_final / Ts)
     rec = {k: [] for k in ("q", "qhat", "qref", "u", "dev", "sdev", "refdev", "esterr",
-                           "tref", "tmpc", "tmhe", "lam", "sproj")}
+                           "tref", "tmpc", "tmhe", "lam", "sproj", "reach")}
     fails = {"ref_fail": 0, "mpc_fail": 0, "mhe_fail": 0}
     u_last = np.zeros(model.nu)
     s_proj = np.full(N + 1, s_v)
@@ -319,6 +350,8 @@ def simulate(
         rec["tmhe"].append(t_mhe)
         rec["lam"].append(lam.copy())
         rec["sproj"].append(s_proj.copy())
+        e_r = getattr(refgen, "last_e_r", None)
+        rec["reach"].append(np.full(model.nq, np.nan) if e_r is None else e_r.copy())
 
         q_true = model.step(q_true, u_app)
         if cfg.process_noise:
@@ -340,6 +373,7 @@ def simulate(
         t_ref=np.array(rec["tref"]), t_mpc=np.array(rec["tmpc"]), t_mhe=np.array(rec["tmhe"]),
         lam=A("lam"), s_proj=A("sproj"),
         curved=path.curved_mask(np.array(rec["sproj"])[:, 0]),
+        reach=A("reach"),
         fails=fails,
         meta={"N": N, "path": path.name, "hitching": model.hitching,
               "n_var_ref": refgen.n_var, "n_con_ref": refgen.n_con,

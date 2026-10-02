@@ -18,6 +18,7 @@ as steady behaviour was still the start-up transient. The durations are:
 | s6_corridor_design | agricultural | 1.0 | 160 |
 | s7_varying_n | rounded rectangle | 1.1 | 115 + 115 |
 | s8_comparison | agricultural | 1.0 | 160 |
+| s9_reachability | agricultural | 1.0 | 160 |
 
 **Parallel execution.** `studies/parallel.py` spreads the runs of a sweep over
 `GNT_JOBS` worker processes. Each worker rebuilds its own model, because a
@@ -99,6 +100,7 @@ wall-clock per simulated second):
 | `s3_inputs` | 2 runs | 6 min | serial by design |
 | `s7_varying_n` | 115 s at N = 4 then 115 s at N = 2 | 15 min | serial by design |
 | `s8_comparison` | 3 methods x 3 seeds x 160 s + the offline fit | 50 min | serial by design |
+| `s9_reachability` | 3 seeds x 160 s | 10 min | 4 min |
 | `s4_scaling` | N = 1..12 and Nc = 10..30 | 20 min | serial by design |
 
 A faster machine scales these roughly with single-core clock. On ten cores of a
