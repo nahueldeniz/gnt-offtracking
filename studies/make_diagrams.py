@@ -379,7 +379,11 @@ def paths_figure():
                              gridspec_kw=dict(height_ratios=[1.45, 1.0], hspace=0.70, wspace=0.34))
     for j, (name, title) in enumerate(specs):
         p = make_path(name)
-        k = p.curvature()
+        # The finite-difference curvature has single-sample spikes where segments
+        # sampled at different spacings meet (the corners of the rounded
+        # rectangle); a five-sample median removes them and nothing else.
+        from scipy.ndimage import median_filter
+        k = median_filter(p.curvature(), size=5, mode="nearest")
         kmax = np.percentile(k, 99.5)
         ax = axes[0, j]
         ax.plot(p.xy[0], p.xy[1], "-", color=C_PATH, lw=1.0)
@@ -398,7 +402,7 @@ def paths_figure():
         ax.set_ylim(0, max(kmax * 1.25, 0.1))
         ax.set_xlabel("arc length (m)", fontsize=7.5)
         if j == 0:
-            ax.set_ylabel(r"curvature (m$^{-1}$)", fontsize=7.5)
+            ax.set_ylabel(r"$|$curvature$|$ (m$^{-1}$)", fontsize=7.5)
         ax.tick_params(labelsize=6.5)
     save(fig, "paths")
 

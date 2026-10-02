@@ -1,9 +1,16 @@
 {
-  "rebuild_s": 0.034125828999094665,
-  "worst_before": 0.11407654270842736,
-  "worst_after": 0.04398385530519847,
-  "peak_after": 0.04608119936856761,
-  "settle_s": 0.0,
+  "rebuild_s": 0.05906193400005577,
+  "worst_before": 0.0939911670676584,
+  "worst_after": 0.09508166248162273,
+  "peak_after": 0.5840951104566677,
+  "s_peak_after": 64.03509041278124,
+  "peak_ref_same_corner": 0.5066822077070819,
+  "worst_mean_after": 0.08711825654707614,
+  "worst_mean_ref_same": 0.08171283483315045,
+  "completed_before": true,
+  "completed_after": true,
+  "completed_ref": true,
   "fails_before": 0,
-  "fails_after": 0
+  "fails_after": 0,
+  "fails_ref": 0
 }

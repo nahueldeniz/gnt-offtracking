@@ -19,26 +19,30 @@ Three reference points, chosen so that each isolates something different.
     Geometric look-ahead steering of the tractor: the naive floor, and the
     method that requires no model of the chain at all.
 
-A fourth, the cascaded tracking controller of Michałek (TCST 2017), is reported
-separately by :mod:`s9_cascade` because it does not exist for this vehicle: its
-inner loop inverts ``J_i``, and ``det J_i = -Lh_i / L_i`` vanishes at the
-platform's on-axle second hitch.
+The cascaded tracking controller of Michałek (TCST 2017) is not included: it
+does not exist for this vehicle, since its inner loop inverts ``J_i`` and
+``det J_i = -Lh_i / L_i`` vanishes at the platform's on-axle second hitch.
 
-What the comparison should show, and what it should not: ``mp2021`` prescribes
-the path for the **last trailer only**, so it should place that segment at least
-as well as the proposed method and the remaining segments worse.  The claim
-being tested is not that the proposed method tracks better -- it is that it
-distributes, and that it does so online.
+``mp2021`` prescribes the path for the **last trailer only**, so it is expected
+to place that segment at least as well as the proposed method and the remaining
+segments worse; the quantities compared are the deviation of every segment and
+the width of the corridor swept by the whole vehicle.
+
+``--guidance-only`` re-runs the guidance-point sweep alone, against the
+comparison already in ``out/``.
 """
 
 from __future__ import annotations
 
+import json
+import os
+import sys
 import time
 
 import numpy as np
 import matplotlib.pyplot as plt
 
-from common import (C_GREY, C_LAST, C_MID, C_PATH, C_TRACTOR, dump, g2t, save,  # noqa: E402
+from common import (C_GREY, C_LAST, C_MID, C_PATH, C_TRACTOR, OUT, dump, g2t, save, study_path, t_final_for,  # noqa: E402
                     seg_colours, seg_label)
 
 from gntpf import (RefGenWeights, SensorModel, SimConfig, TrackingNMPC,  # noqa: E402
@@ -60,7 +64,7 @@ COL = {"pursuit": "#7C8B99", "mp2021": "#4E7CB0", "proposed": "#A8372B"}
 # profile, and a field path whose curvature is piecewise constant with jumps
 # needs far more harmonics than a smooth closed curve.  The baseline is given
 # the generous setting rather than the cheap one.
-CASES = [("agricultural", 160.0, 64)]
+CASES = [("agricultural", 64)]
 SEEDS = (0, 1, 2)
 SIGMA = 1.0
 W = RefGenWeights(w_path=20.0, w_theta=5.0)
@@ -84,9 +88,10 @@ def mp_reference(model, path, n_harm=32, n_coll=600):
     return s, Q, time.perf_counter() - t0, g.resid_rms
 
 
-def run_case(path_name, t_final, n_harm=32):
-    path = make_path(path_name)
+def run_case(path_name, n_harm=32):
     model = g2t()
+    path = study_path(path_name, model)
+    t_final = t_final_for(path, SIGMA)
     s_mp, Q_mp, t_fit, resid = mp_reference(model, path, n_harm=n_harm)
     print(f"  M&P offline fit: {t_fit:.1f} s, residual {resid:.3f}", flush=True)
 
@@ -108,7 +113,12 @@ def run_case(path_name, t_final, n_harm=32):
             acc.append(r)
             if sd == SEEDS[0]:
                 traces[meth] = (r, m)
-        S = [a.summary() for a in acc]
+        S_all = [a.summary() for a in acc]
+        S = [x for x in S_all if x["completed"]]
+        if not S:
+            out[meth] = {"n_diverged": len(S_all), "fails": int(sum(sum(a.fails.values()) for a in acc))}
+            print(f"  {NICE.get(meth, meth):34s} no run completed", flush=True)
+            continue
         mc = np.stack([s["mean_dev_curved"] for s in S])
         out[meth] = {
             "mean_curved": mc.mean(0), "mean_curved_sd": mc.std(0),
@@ -118,6 +128,7 @@ def run_case(path_name, t_final, n_harm=32):
             "corridor": float(np.mean([s["corridor_width_curved"] for s in S])),
             "t_online_ms": float(np.mean([s["t_ref_ms"] + s["t_mpc_ms"] for s in S])),
             "fails": int(sum(sum(a.fails.values()) for a in acc)),
+            "n_diverged": int(sum(not x["completed"] for x in S_all)),
         }
         print(f"  {NICE[meth]:34s} per-seg {np.round(out[meth]['mean_curved'],3)} "
               f"worst {out[meth]['worst_curved']:.3f}  corridor {out[meth]['corridor']:.3f} m",
@@ -143,43 +154,45 @@ def guide_alpha(N, t):
 
 
 def run_guidance_sweep(path, t_final, ts=GUIDE_TS, seeds=SEEDS):
-    """Move a single guidance point along the chain and watch the reference drift.
+    """Move a single guidance point along the chain.
 
     This is the guidance-point *objective* evaluated inside our own generator,
     not an implementation of any published controller: a cascaded guidance-point
     controller carries a stabilising inner loop that this formulation has no
     equivalent of, and labelling the curve with an author's name would credit
-    them with a failure that is ours.  What it does show, and what no single-case
-    comparison can, is that the objective is ill-posed as a function of where the
-    point is put -- everywhere except the tractor it leaves the reference free to
-    translate, and the reachability constraint slows that drift without removing
-    it.
+    them with results that are ours.
 
-    The guidance point's own deviation is recorded alongside, because it is the
-    control: if the point sits on the path while the vehicle does not, the
-    objective has been met and is simply the wrong objective.
+    The guidance point's own deviation (the time mean of the distance between the
+    reference's guidance point and the path) is recorded alongside the deviations
+    of the segments, and so are the solves that did not terminate successfully.
     """
     rows = []
     for t in ts:
-        worst, corr, gdev = [], [], []
+        worst, corr, gdev, n_div, fails = [], [], [], 0, 0
         for sd in seeds:
             m = g2t()
             a = guide_alpha(m.N, t)
             w = RefGenWeights(w_path=0.0, w_theta=5.0, w_guide=W_GUIDE, guide_alpha=a)
             r = simulate(m, path, SimConfig(sigma=SIGMA, t_final=t_final, seed=sd),
                          sensors=sensors_for(m), refgen_weights=w)
+            fails += int(sum(r.fails.values()))
             s = r.summary()
+            if not s["completed"]:
+                n_div += 1
+                continue
             worst.append(s["worst_curved"])
             corr.append(s["corridor_width_curved"])
-            k0 = int(0.15 * r.t.size)
-            P = np.stack([r.qref[2 * m.N + 1 + 2 * i: 2 * m.N + 3 + 2 * i, k0:]
+            kk = r.masks()[0][0]
+            P = np.stack([r.qref[2 * m.N + 1 + 2 * i: 2 * m.N + 3 + 2 * i, kk]
                           for i in range(m.N + 1)])
             g = np.tensordot(a, P, axes=(0, 0))
             gdev.append(float(np.mean([path.deviation(g[:, j])
                                        for j in range(0, g.shape[1], 40)])))
-        rows.append(dict(t=float(t), worst=float(np.mean(worst)),
-                         worst_sd=float(np.std(worst)),
-                         corridor=float(np.mean(corr)), guide_dev=float(np.mean(gdev))))
+        rows.append(dict(t=float(t), n_diverged=n_div, fails=fails,
+                         worst=float(np.mean(worst)) if worst else float("nan"),
+                         worst_sd=float(np.std(worst)) if worst else float("nan"),
+                         corridor=float(np.mean(corr)) if corr else float("nan"),
+                         guide_dev=float(np.mean(gdev)) if gdev else float("nan")))
         print(f"  guidance at t={t:.1f}  worst {rows[-1]['worst']:.3f} m  "
               f"corridor {rows[-1]['corridor']:.3f} m  "
               f"(the point itself: {rows[-1]['guide_dev']:.3f} m)", flush=True)
@@ -260,15 +273,25 @@ def figure(path, out, traces, tag):
 
 
 if __name__ == "__main__":
-    for pname, tf, nh in CASES:
+    if "--guidance-only" in sys.argv:
+        # Re-run the guidance sweep alone, against the comparison already in out/.
+        with open(os.path.join(OUT, "s8_comparison.json")) as fh:
+            pw = json.load(fh)["proposed"]["worst_curved"]
+        path = study_path("agricultural", g2t())
+        print("[S8] guidance-point objective, swept along the chain", flush=True)
+        grows = run_guidance_sweep(path, t_final_for(path, SIGMA))
+        figure_guidance(grows, pw)
+        dump({"sweep": grows, "proposed_worst": pw, "w_guide": W_GUIDE}, "s8_guidance")
+        sys.exit(0)
+    for pname, nh in CASES:
         tag = "" if pname == "agricultural" else f"_{pname}"
         print(f"[S8] comparison -- {pname} (n_harm={nh})", flush=True)
-        path, out, traces = run_case(pname, tf, n_harm=nh)
+        path, out, traces = run_case(pname, n_harm=nh)
         dump(out, f"s8_comparison{tag}")
         figure(path, out, traces, tag)
         if pname == "agricultural":
             print("[S8] guidance-point objective, swept along the chain", flush=True)
-            grows = run_guidance_sweep(path, tf)
+            grows = run_guidance_sweep(path, t_final_for(path, SIGMA))
             figure_guidance(grows, out["proposed"]["worst_curved"])
             dump({"sweep": grows, "proposed_worst": out["proposed"]["worst_curved"],
                   "w_guide": W_GUIDE}, "s8_guidance")

@@ -112,12 +112,17 @@ def stats(trials):
         beta_max=float(np.mean([t["beta_max_deg"] for t in trials])),
         beta_over=float(np.mean([t["beta_over_limit_pct"] for t in trials])),
         duration=float(np.mean([t["duration_s"] for t in trials])),
+        path_min_radius=float(np.median([t.get("path_min_radius", np.nan) for t in trials])),
     )
 
 
 def main():
     rows = load()
-    report = {"n_logs": len(rows)}
+    report = {"n_logs": len(rows),
+              # every logged trial, whatever its session or configuration
+              "n_beta_meas_over": int(sum(r["beta_max_deg"] > BETA_LIMIT_DEG for r in rows)),
+              "n_beta_est_over": int(sum(r.get("beta_est_max_deg", 0.0) > BETA_LIMIT_DEG
+                                         for r in rows))}
 
     for spec in EXPERIMENTS:
         allday = select(rows, spec["day"], spec["path"], spec["L"])
@@ -161,9 +166,15 @@ def main():
     by_w = {}
     for t in sw:
         by_w.setdefault(round(t["w_last_ratio"], 2), []).append(t)
-    report["E3"] = {**SWEEP, "n": len(sw), "points": [
+    sweep_day = [r for r in rows if r["day"] == SWEEP["day"]]
+    report["E3"] = {**SWEEP, "n": len(sw), "n_day": len(sweep_day),
+                    "n_day_other_path": len([r for r in sweep_day if r["path_kind"] != SWEEP["path"]]),
+                    "n_day_other_path_weights": len({round(r["w_last_ratio"], 2) for r in sweep_day
+                                                     if r["path_kind"] != SWEEP["path"]}),
+                    "points": [
         dict(w=w, n=len(v), mean_dev=list(np.stack([x["mean_dev"] for x in v]).mean(axis=0)),
-             worst=float(np.stack([x["mean_dev"] for x in v]).mean(axis=0).max()))
+             worst=float(np.stack([x["mean_dev"] for x in v]).mean(axis=0).max()),
+             Ne=sorted({int(x["Ne"]) for x in v}), Nc=sorted({int(x["Nc"]) for x in v}))
         for w, v in sorted(by_w.items())]}
     print(f"E3 weighting sweep {len(sw)} trials, w_last/w_0 in "
           f"{sorted(by_w)} on the second vehicle")

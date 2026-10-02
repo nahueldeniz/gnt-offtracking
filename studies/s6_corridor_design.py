@@ -1,41 +1,37 @@
-"""S6 -- the corridor as the design variable.
+"""S6 -- the corridor swept by the vehicle against the distribution of the weight.
 
-What decides whether a vehicle can work a field is not the off-tracking of any
-one segment but the width of the lane the whole machine sweeps.  A gate, a
-headland, a row spacing and a gap between obstacles are all widths.
-
-Referencing every segment makes that width something that can be *designed*
-rather than merely measured.  Moving the emphasis along the chain moves the
-corridor with it, monotonically, and the price is paid in a redistribution of
-off-tracking among the segments.  A method that references a single point of the
-chain sits at one spot in this plane and cannot move.
+The quantity reported is the width of the lane the whole chain sweeps over the
+curved sections: the span between the left-most and the right-most excursion of
+any segment.  The position weights of the generator are tilted along the chain
+by one parameter, kappa (towards the tractor for kappa < 0, towards the last
+trailer for kappa > 0), at constant total weight.
 
 Three views:
 
-    corridor  -- swept width against the weight tilt.  This is the headline: it
-                 is the quantity that decides whether the vehicle fits, and it
-                 responds monotonically to the knob.
-    profile   -- where the off-tracking goes as the emphasis moves.  This is the
-                 mechanism, and the shape is worth reading carefully: weighting
-                 the last trailer *harder* makes it worse, because its deviation
-                 on a turn this tight is largely forced by the exact geometry and
-                 pressing the reference towards the path only distorts the rest
-                 of the posture.
-    frontier  -- corridor width against worst-segment off-tracking, the design
-                 trade-off actually available, with the comparison methods
-                 plotted as the single points they occupy.
+    corridor  -- swept width against kappa.
+    profile   -- the mean off-tracking of each segment against kappa.
+    frontier  -- corridor width against worst-segment off-tracking, with the
+                 comparison methods plotted as the single points they occupy.
 
-The vehicle and path are the field platform on the agricultural geometry, where
-the omega headland turns are genuinely incompatible with the chain and there is
-therefore something to distribute.
+On this path the data show that weighting the last trailer more heavily does
+not reduce its off-tracking; the study reports that as found and does not
+explain it.
+
+The vehicle and path are those of the field platform on the agricultural
+geometry.  ``--replot`` redraws the figure from out/ without re-running.
 """
 
 from __future__ import annotations
 
+import json
+import os
+import sys
+
 import numpy as np
 import matplotlib.pyplot as plt
 
-from common import C_GREY, C_LAST, C_MID, C_TRACTOR, dump, g2t, save, seg_colours, seg_label
+from common import (C_GREY, C_LAST, C_MID, C_TRACTOR, OUT, dump, g2t, save, seg_colours, seg_label,
+                    study_path, t_final_for)
 
 from gntpf import RefGenWeights, SensorModel, SimConfig, make_path, simulate
 from parallel import pmap
@@ -43,7 +39,7 @@ from gntpf.baselines import PurePursuit, simulate_baseline, simulate_with_refere
 from gntpf.mp_refgen import MPReferenceGenerator
 
 PATH = "agricultural"
-T_FINAL, SIGMA = 160.0, 1.0
+SIGMA = 1.0
 SEEDS = (0, 1, 2)
 W_BASE = 20.0
 KAPPAS = [-4.0, -2.0, -1.0, 0.0, 1.0, 2.0, 4.0]
@@ -86,11 +82,13 @@ def tilt_weights(N, kappa, w_base=W_BASE):
 
 def _one_tilt(path_name, kappa, seed):
     m = g2t()
-    res = simulate(m, make_path(path_name), SimConfig(sigma=SIGMA, t_final=T_FINAL, seed=seed),
+    path = study_path(path_name, m)
+    res = simulate(m, path, SimConfig(sigma=SIGMA, t_final=t_final_for(path, SIGMA), seed=seed),
                    sensors=sensors_for(m),
                    refgen_weights=RefGenWeights(w_path=tilt_weights(m.N, kappa), w_theta=5.0))
     s = res.summary()
-    return (s["mean_dev_curved"], s["corridor_width_curved"], s["worst_curved"])
+    return (s["mean_dev_curved"], s["corridor_width_curved"], s["worst_curved"], s["completed"],
+            sum(res.fails.values()))
 
 
 def run_sweep(path, kappas=KAPPAS, seeds=SEEDS, path_name=PATH):
@@ -99,10 +97,18 @@ def run_sweep(path, kappas=KAPPAS, seeds=SEEDS, path_name=PATH):
     rows = []
     for i, k in enumerate(kappas):
         chunk = done[i * len(seeds):(i + 1) * len(seeds)]
+        n_div = sum(not c[3] for c in chunk)
+        fails = int(sum(c[4] for c in chunk))
+        chunk = [c for c in chunk if c[3]]
+        if not chunk:
+            rows.append(dict(kappa=float(k), n_diverged=int(n_div), fails=fails))
+            print(f"  kappa {k:+5.1f}  no run completed", flush=True)
+            continue
         P = np.stack([c[0] for c in chunk])
         corr = [c[1] for c in chunk]
         worst = [c[2] for c in chunk]
-        rows.append(dict(kappa=float(k), per_seg=P.mean(0), per_seg_sd=P.std(0),
+        rows.append(dict(kappa=float(k), n_diverged=int(n_div), fails=fails,
+                         per_seg=P.mean(0), per_seg_sd=P.std(0),
                          tractor=float(P.mean(0)[0]), last=float(P.mean(0)[-1]),
                          worst=float(np.mean(worst)), worst_sd=float(np.std(worst)),
                          corridor=float(np.mean(corr)), corridor_sd=float(np.std(corr))))
@@ -123,10 +129,10 @@ def run_reference_points(path, seeds=SEEDS):
     g = MPReferenceGenerator(m0, n_harm=64, n_coll=600, homotopy=5)
     s_mp, Q_mp = g.reference_states(path, n=600)
     for tag in ("pursuit", "mp2021"):
-        corr, worst = [], []
+        corr, worst, n_div = [], [], 0
         for sd in seeds:
             m = g2t()
-            cfg = SimConfig(sigma=SIGMA, t_final=T_FINAL, seed=sd)
+            cfg = SimConfig(sigma=SIGMA, t_final=t_final_for(path, SIGMA), seed=sd)
             if tag == "pursuit":
                 r = simulate_baseline(m, path, PurePursuit(m, speed=SIGMA), cfg,
                                       sensors=sensors_for(m))
@@ -134,9 +140,14 @@ def run_reference_points(path, seeds=SEEDS):
                 r = simulate_with_reference(m, path, s_mp, Q_mp, cfg,
                                             sensors=sensors_for(m), label=tag)
             s = r.summary()
+            if not s["completed"]:
+                n_div += 1
+                continue
             corr.append(s["corridor_width_curved"])
             worst.append(s["worst_curved"])
-        out[tag] = dict(corridor=float(np.mean(corr)), worst=float(np.mean(worst)))
+        out[tag] = dict(corridor=float(np.mean(corr)) if corr else float("nan"),
+                        worst=float(np.mean(worst)) if worst else float("nan"),
+                        n_diverged=n_div)
         print(f"  {tag:10s} corridor {out[tag]['corridor']:.3f} m  worst {out[tag]['worst']:.3f} m",
               flush=True)
     return out
@@ -155,7 +166,7 @@ def figure(rows, refs):
                 fmt="o-", ms=3.4, color=C_LAST, lw=1.3, capsize=2.5, elinewidth=0.7)
     ax.set_xlabel(r"weight tilt $\kappa$")
     ax.set_ylabel("corridor width\nrequired (m)")
-    ax.set_title("the corridor follows the weight", fontsize=8, loc="left")
+    ax.set_title("corridor width", fontsize=8, loc="left")
 
     # --- the mechanism
     ax = fig.add_subplot(gs[0, 1])
@@ -166,7 +177,7 @@ def figure(rows, refs):
     ax.set_xlabel(r"weight tilt $\kappa$")
     ax.set_ylabel("off-tracking in\ncurved sections (m)")
     ax.legend(fontsize=6.5)
-    ax.set_title("where the error goes", fontsize=8, loc="left")
+    ax.set_title("off-tracking per segment", fontsize=8, loc="left")
 
     # --- the reachable design trade-off
     ax = fig.add_subplot(gs[0, 2])
@@ -187,8 +198,10 @@ def figure(rows, refs):
             ax.annotate(lab, (refs[tag]["worst"], refs[tag]["corridor"]),
                         textcoords="offset points", xytext=off, fontsize=6.2,
                         color=col, ha=ha, va="top")
-    ax.annotate("proposed", (w[0], c[0]), textcoords="offset points", xytext=(9, 0),
-                fontsize=6.2, color="#444444", ha="left", va="center")
+    i0 = int(np.argmin(np.abs(kap)))           # kappa = 0: the even, proposed setting
+    ax.annotate(r"even ($\kappa=0$)", (w[i0], c[i0]), textcoords="offset points",
+                xytext=(16, -18), fontsize=6.2, color="#444444", ha="left", va="center",
+                arrowprops=dict(arrowstyle="-", lw=0.6, color="#444444", shrinkA=0, shrinkB=2))
     ax.set_xlabel("worst-segment\noff-tracking (m)")
     ax.set_ylabel("corridor width (m)")
     # Leave headroom: the comparison points sit well outside the reachable set,
@@ -198,13 +211,18 @@ def figure(rows, refs):
     mx, my = 0.10 * (max(xs) - min(xs)), 0.16 * (max(ys) - min(ys))
     ax.set_xlim(min(xs) - mx, max(xs) + mx)
     ax.set_ylim(min(ys) - my, max(ys) + my)
-    ax.set_title("reachable designs", fontsize=8, loc="left")
+    ax.set_title("worst segment and corridor", fontsize=8, loc="left")
     save(fig, "s6_corridor_design")
 
 
 if __name__ == "__main__":
+    if "--replot" in sys.argv:                  # redraw from out/ without re-running
+        with open(os.path.join(OUT, "s6_corridor_design.json")) as fh:
+            d = json.load(fh)
+        figure(d["tilt_sweep"], d["reference_points"])
+        sys.exit(0)
     print("[S6] corridor as the design variable", flush=True)
-    path = make_path(PATH)
+    path = study_path(PATH, g2t())
     rows = run_sweep(path)
     refs = run_reference_points(path)
     dump({"tilt_sweep": rows, "reference_points": refs, "path": PATH, "w_base": W_BASE},

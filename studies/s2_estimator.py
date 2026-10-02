@@ -24,15 +24,15 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from parallel import pmap  # noqa: E402
-from common import (C_GREY, C_LAST, C_MID, C_PATH, dump, g2t, save,  # noqa: E402
+from common import (C_GREY, C_LAST, C_MID, C_PATH, dump, g2t, save, study_path, t_final_for,  # noqa: E402
                     seg_colours, seg_label)
 
-from gntpf import (EKF, NMHE, SensorModel, SimConfig, make_path, simulate)  # noqa: E402
+from gntpf import (RefGenWeights, EKF, NMHE, SensorModel, SimConfig, make_path, simulate)  # noqa: E402
 
 REGIMES = {
-    "clean":    dict(outlier_prob=0.0, t_final=118.0),
-    "outliers": dict(outlier_prob=0.06, outlier_gain=12.0, t_final=118.0),
-    "limit":    dict(outlier_prob=0.0, tight=True, t_final=45.0),
+    "clean":    dict(outlier_prob=0.0),
+    "outliers": dict(outlier_prob=0.06, outlier_gain=12.0),
+    "limit":    dict(outlier_prob=0.0, tight=True),
 }
 
 
@@ -54,12 +54,13 @@ def matched_ekf(model, sensors):
 
 def _one(reg, est_name, seed):
     spec = REGIMES[reg]
-    path = make_path("square" if spec.get("tight") else "lemniscate")
     model = g2t()
+    path = study_path("square" if spec.get("tight") else "lemniscate", model)
     sensors = build_sensors(model, spec)
     est = NMHE(model) if est_name == "nmhe" else matched_ekf(model, sensors)
-    res = simulate(model, path, SimConfig(sigma=1.0, t_final=spec["t_final"], seed=seed),
-                   sensors=sensors, estimator=est)
+    res = simulate(model, path, SimConfig(sigma=1.0, t_final=t_final_for(path, 1.0), seed=seed),
+                   sensors=sensors, estimator=est,
+                   refgen_weights=RefGenWeights(w_path=20.0, w_theta=5.0))
     return res
 
 
@@ -70,21 +71,28 @@ def run(seeds=(0, 1, 2)):
     k = 0
     for reg in REGIMES:
         for est_name in ("nmhe", "ekf"):
-            acc = done[k:k + len(seeds)]; k += len(seeds)
+            acc_all = done[k:k + len(seeds)]; k += len(seeds)
+            acc = [r for r in acc_all if r.summary()["completed"]]
+            n_div, fails = len(acc_all) - len(acc), int(sum(sum(r.fails.values()) for r in acc_all))
             model = g2t()
-            errs = [r.est_err[:, int(0.15 * r.t.size):] for r in acc]
+            traces[(reg, est_name)] = (acc[0] if acc else acc_all[0], model)
+            if not acc:
+                out[f"{reg}/{est_name}"] = {"n_diverged": n_div, "fails": fails}
+                print(f"  {reg:9s} {est_name:5s}  no run completed", flush=True)
+                continue
+            errs = [np.where(r.masks()[0], r.est_err, np.nan) for r in acc]
             times = [r.summary()["t_mhe_ms"] for r in acc]
             betaviol = [100.0 * (np.abs(r.qhat[model.i_beta, :]) > np.deg2rad(85.0)).mean()
                         for r in acc]
-            traces[(reg, est_name)] = (acc[0], model)
             E = np.concatenate(errs, axis=1)
             out[f"{reg}/{est_name}"] = {
-                "rmse": float(np.sqrt((E ** 2).mean())),
-                "rmse_per_seg": np.sqrt((E ** 2).mean(axis=1)),
-                "p95": float(np.percentile(E, 95)),
-                "max": float(E.max()),
+                "rmse": float(np.sqrt(np.nanmean(E ** 2))),
+                "rmse_per_seg": np.sqrt(np.nanmean(E ** 2, axis=1)),
+                "p95": float(np.nanpercentile(E, 95)),
+                "max": float(np.nanmax(E)),
                 "solve_ms": float(np.mean(times)),
                 "infeasible_pct": float(np.mean(betaviol)),
+                "n_diverged": n_div, "fails": fails,
             }
             r = out[f"{reg}/{est_name}"]
             print(f"  {reg:9s} {est_name:5s}  RMSE {r['rmse']:.4f} m   p95 {r['p95']:.4f}   "

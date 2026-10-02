@@ -21,7 +21,7 @@ from gntpf.mp_refgen import (MPReferenceGenerator, closed_form_betas,
 
 # (label, class, Lh, L)
 GEOMETRIES = [
-    ("N=1 GNT", "GNT", [0.342], [1.08]),
+    ("N=1 nSNT", "nSNT", [0.342], [1.08]),
     ("N=2 field", "GNT", [0.342, 0.0], [1.08, 0.78]),
     ("N=3 SNT", "SNT", [0.0, 0.0, 0.0], [1.0, 0.8, 0.7]),
     ("N=3 nSNT", "nSNT", [0.25, -0.2, 0.3], [1.0, 0.8, 0.7]),
@@ -31,7 +31,7 @@ GEOMETRIES = [
 ]
 
 N_STEPS = 2000
-TS = 0.01
+TS = 0.05          # the sampling period of every simulation in the paper
 
 
 def chain_residual(m, q):

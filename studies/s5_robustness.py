@@ -26,7 +26,7 @@ from __future__ import annotations
 import numpy as np
 import matplotlib.pyplot as plt
 
-from common import C_GREY, C_LAST, C_MID, C_TRACTOR, G2T, dump, save
+from common import C_GREY, C_LAST, C_MID, C_TRACTOR, G2T, dump, save, study_path, t_final_for
 
 from gntpf import (NMHE, GNT, ReferenceGenerator, RefGenWeights, SensorModel,
                    SimConfig, TrackingNMPC, make_path, simulate)
@@ -38,7 +38,7 @@ SLIPS = [1.0, 0.95, 0.90, 0.85]
 SEEDS = (0, 1, 2, 3)
 W = RefGenWeights(w_path=20.0, w_theta=5.0)
 PATH = "agricultural"
-T_FINAL, SIGMA = 160.0, 1.0
+SIGMA = 1.0
 
 
 def sensors_for(model, scale=1.0):
@@ -50,7 +50,8 @@ def metrics(res):
     """Both quantities of interest: where the vehicle went, and where we thought
     it went."""
     s = res.summary()
-    return s["worst_curved"], s["est_err_mean"], s["est_err_max"]
+    return (s["worst_curved"], s["est_err_mean"], s["est_err_max"], s["completed"],
+            sum(res.fails.values()))
 
 
 def perturbed_model(e, rng):
@@ -75,7 +76,7 @@ def _run_one(plant, control_model, path, seed, sensors, slip=(1.0, 1.0)):
         kw = dict(nmpc=TrackingNMPC(control_model, Nc=20),
                   estimator=NMHE(control_model),
                   refgen=ReferenceGenerator(control_model, weights=W))
-    return simulate(plant, path, SimConfig(sigma=SIGMA, t_final=T_FINAL, seed=seed, slip=slip),
+    return simulate(plant, path, SimConfig(sigma=SIGMA, t_final=t_final_for(path, SIGMA), seed=seed, slip=slip),
                     sensors=sensors, refgen_weights=W, **kw)
 
 
@@ -86,7 +87,7 @@ def _one(kind, value, seed, path_name):
     cm = perturbed_model(value, rng) if kind == "hitch" else plant
     sen = sensors_for(plant, value if kind == "noise" else 1.0)
     sl = (value, value) if kind == "slip" else (1.0, 1.0)
-    return metrics(_run_one(plant, cm, make_path(path_name), seed, sen, sl))
+    return metrics(_run_one(plant, cm, study_path(path_name, plant), seed, sen, sl))
 
 
 def sweep(kind, path, path_name=PATH):
@@ -96,11 +97,17 @@ def sweep(kind, path, path_name=PATH):
     rows = []
     for i, v in enumerate(values):
         chunk = done[i * len(SEEDS):(i + 1) * len(SEEDS)]
+        n_div = sum(not c[3] for c in chunk)
+        fails = int(sum(c[4] for c in chunk))
+        chunk = [c for c in chunk if c[3]]
+        nan = float("nan")
         off = [c[0] for c in chunk]; est = [c[1] for c in chunk]; estmax = [c[2] for c in chunk]
-        rows.append(dict(value=float(v),
-                         off=float(np.mean(off)), off_sd=float(np.std(off)),
-                         est=float(np.mean(est)), est_sd=float(np.std(est)),
-                         est_max=float(np.max(estmax))))
+        rows.append(dict(value=float(v), n_diverged=int(n_div), fails=fails,
+                         off=float(np.mean(off)) if off else nan,
+                         off_sd=float(np.std(off)) if off else nan,
+                         est=float(np.mean(est)) if est else nan,
+                         est_sd=float(np.std(est)) if est else nan,
+                         est_max=float(np.max(estmax)) if estmax else nan))
         print(f"  {kind:6s} {v:<6} off-tracking {rows[-1]['off']:.3f} m   "
               f"estimation {rows[-1]['est']:.4f} m (max {rows[-1]['est_max']:.3f})", flush=True)
     return rows
@@ -140,7 +147,7 @@ def figure(data):
 
 
 if __name__ == "__main__":
-    path = make_path(PATH)
+    path = study_path(PATH, GNT(N=2, Lh=G2T["Lh"], L=G2T["L"]))
     data = {}
     for kind in ("noise", "hitch", "slip"):
         print(f"[S5] {kind}", flush=True)

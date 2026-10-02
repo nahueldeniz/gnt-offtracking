@@ -20,7 +20,7 @@ trials are reported separately and are not used for the headline numbers.
 *No trial referenced the last trailer alone.* Every one of the logs weights the
 position of every segment in the reference generator; what varies between trials
 is how heavily the last trailer is weighted relative to the others, from parity
-up to a factor of about sixteen. There is therefore no field counterpart of the
+up to a factor of about seventeen. There is therefore no field counterpart of the
 "last trailer only" strategy, and the claim that there was one has been removed.
 What the spread in weights does provide is a field counterpart of S6, which is
 reported instead because it is what the data supports.
@@ -95,6 +95,27 @@ def load_trial(fp):
         )
 
 
+def min_radius(coords, ds=0.02, window=0.2):
+    """Smallest radius of curvature of a logged path.
+
+    The heading is resampled every ``ds`` metres of arc and its rate averaged over
+    ``window`` metres, so that the spacing of the logged coordinates does not set
+    the value.  On the lemniscate the result varies from 0.44 m to 0.50 m as the
+    window goes from 0.1 m to 0.5 m.  The corners of the rectangle are sharp, so
+    there the value reflects the window and nothing else.
+    """
+    c = np.asarray(coords, dtype=float).T
+    d = np.hypot(*np.diff(c, axis=0).T)
+    c = c[np.r_[True, d > 1e-9]]
+    s = np.r_[0.0, np.cumsum(np.hypot(*np.diff(c, axis=0).T))]
+    S = np.arange(0.0, s[-1], ds)
+    x, y = np.interp(S, s, c[:, 0]), np.interp(S, s, c[:, 1])
+    h = np.unwrap(np.arctan2(np.gradient(y), np.gradient(x)))
+    n = max(1, int(round(window / ds)))
+    k = np.convolve(np.gradient(h, S), np.ones(n) / n, mode="valid")
+    return float(1.0 / max(np.abs(k).max(), 1e-9))
+
+
 def analyse(tr):
     """Per-segment off-tracking of the estimated posture, and the joint angles."""
     N, xest = tr["N"], tr["xest"]
@@ -123,11 +144,13 @@ def analyse(tr):
         L=list(np.round(tr["L"], 3)), Lh=list(np.round(tr["Lh"], 3)),
         w_last_ratio=float(tr["wref"][-1] / max(tr["wref"][0], 1e-9)),
         steps=K, duration_s=float(K * tr["Ts"]),
+        path_min_radius=min_radius(tr["coords"]),
         mean_dev=dev.mean(axis=1), max_dev=dev.max(axis=1),
         p95_dev=np.percentile(dev, 95, axis=1),
         worst_segment=float(dev.mean(axis=1).max()),
         worst_segment_max=float(dev.max()),
         beta_max_deg=float(np.nanmax(np.abs(beta))) if beta.size else float("nan"),
+        beta_est_max_deg=float(np.nanmax(np.abs(np.rad2deg(xest[:, :N])))),
         beta_over_limit_pct=float(100.0 * np.mean(np.abs(beta) > BETA_MAX_DEG)) if beta.size else 0.0,
         **tt,
     )

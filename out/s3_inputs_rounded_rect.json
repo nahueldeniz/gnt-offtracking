@@ -1,0 +1,41 @@
+{
+  "saturation_pct": 0.2372479240806643,
+  "u_max": [
+    0.7654476830969115,
+    1.9683479343831496
+  ],
+  "u_min": [
+    -0.34443618765995154,
+    0.14999928256589962
+  ],
+  "beta_max_deg": 52.43039471344043,
+  "ref_dev_max": 0.1327402663959629,
+  "ref_dev_mean": 0.018068874668145465,
+  "ref_dev_max_straight": 0.10784748249396023,
+  "ref_dev_mean_straight": 0.012329781267887589,
+  "ref_dev_max_curved": 0.1327402663959629,
+  "ref_dev_mean_curved": 0.052181290865173244,
+  "mean_dev_all": 0.05363782604826157,
+  "mean_dev_last": 0.08045986242917909,
+  "max_dev_last": 0.5246739752278788,
+  "worst_segment": 0.08045986242917909,
+  "worst_segment_max": 0.5246739752278788,
+  "worst_curved": 0.4154584941035146,
+  "curved_fraction": 0.2479240806642942,
+  "t_ref_ms": 3.8251723659049324,
+  "t_mpc_ms": 23.77541283751609,
+  "t_mhe_ms": 13.508444054543062,
+  "t_total_ms": 41.10902925796409,
+  "t_total_p95_ms": 52.053035999051644,
+  "est_err_mean": 0.006883112140522382,
+  "est_err_max": 0.021942060582412968,
+  "completed": true,
+  "progress": 1.0,
+  "corridor_width": 0.5738113603165913,
+  "corridor_left": 0.524673968800458,
+  "corridor_right": -0.04913739151613328,
+  "corridor_width_curved": 0.5700540932742635,
+  "ref_fail": 0,
+  "mpc_fail": 0,
+  "mhe_fail": 0
+}

@@ -32,10 +32,12 @@ def _traj(fname):
     return tr, [x[k0:, 2 * N + 1 + 2 * i: 2 * N + 3 + 2 * i] for i in range(N + 1)]
 
 
-def figure_trajectories(rows):
+def figure_trajectories(rows, report):
     fig, axes = plt.subplots(1, 2, figsize=(7.2, 3.1))
     fig.subplots_adjust(wspace=0.05)
-    for ax, spec in zip(axes, FR.EXPERIMENTS):
+    # The adopted configuration of each experiment is the one field_report.py
+    # selected, so the specification is read from its output.
+    for ax, spec in zip(axes, [report[e["key"]] for e in FR.EXPERIMENTS]):
         sel = trials_of(rows, spec)
         cols = seg_colours(2)
         first = True
@@ -72,7 +74,7 @@ def figure_summary(rows, report):
     # --- per-segment spread over the trials of each experiment
     ax = fig.add_subplot(gs[0, 0])
     pos, ticks, labels = 0, [], []
-    for spec in FR.EXPERIMENTS:
+    for spec in [report[e["key"]] for e in FR.EXPERIMENTS]:
         sel = trials_of(rows, spec)
         data = [np.array([t["mean_dev"][i] for t in sel]) for i in range(3)]
         bp = ax.boxplot(data, positions=[pos + 1, pos + 2, pos + 3], widths=0.62,
@@ -96,23 +98,24 @@ def figure_summary(rows, report):
     for i in range(3):
         ax.plot(w, [p["mean_dev"][i] for p in pts], "o-", ms=3.6, color=cols[i],
                 lw=1.2, label=seg_label(i, 2))
-    for p in pts:
-        ax.annotate(f"n={p['n']}", (p["w"], max(p["mean_dev"])), fontsize=6,
-                    textcoords="offset points", xytext=(0, 6), ha="center", color=C_GREY)
+    # The number of trials at each setting goes under its tick, clear of the data.
     ax.set_xscale("log", base=2)
-    ax.set_xticks(w); ax.set_xticklabels([f"{v:g}" for v in w])
+    ax.set_xticks(w); ax.set_xticklabels([f"{p['w']:g}\n(n={p['n']})" for p in pts], fontsize=7)
+    ax.minorticks_off()
     ax.set_xlabel(r"weight on the last trailer, $w_N/w_0$")
     ax.set_ylabel("off-tracking (m)")
-    ax.set_title("weighting it more makes it worse", fontsize=8, loc="left")
+    ax.set_title("weighting sweep, second vehicle", fontsize=8, loc="left")
     ax.legend(fontsize=6.2)
 
     # --- where the sampling period goes
     ax = fig.add_subplot(gs[0, 2])
     names = [s["label"] for s in FR.EXPERIMENTS]
-    # The three optimisation stages do not account for the whole step: sensing,
-    # the obstacle check and bookkeeping take the rest.  The remainder is shown
-    # rather than dropped, so that the bar can honestly be compared with Ts.
-    stages = [("t_pfa", "reference", C_TRACTOR), ("t_mhe", "estimator", C_MID),
+    # The three optimisation stages do not account for the whole step: the ROS
+    # interface and logging take the rest.  The remainder is shown rather than
+    # dropped, so that the bar can be compared with Ts.  Reference generation is
+    # too small a slice to see, so its cost is given in the legend.
+    pfa = np.mean([report[s["key"]]["t_pfa"] for s in FR.EXPERIMENTS])
+    stages = [("t_pfa", f"reference ({pfa:.1f} ms)", C_TRACTOR), ("t_mhe", "estimator", C_MID),
               ("t_mpc", "tracking", C_LAST)]
     bottom = np.zeros(len(names))
     for key, lab, c in stages:
@@ -121,22 +124,18 @@ def figure_summary(rows, report):
         bottom += vals
     tot = np.array([report[s["key"]]["t_tot"] for s in FR.EXPERIMENTS])
     ax.bar(names, np.maximum(tot - bottom, 0.0), bottom=bottom, color=C_GREY,
-           width=0.55, label="sensing, other", alpha=0.55)
+           width=0.55, label="other", alpha=0.55)
 
     Ts = report[FR.EXPERIMENTS[0]["key"]]["Ts_ms"]
     ax.axhline(Ts, color=C_PATH, ls="--", lw=1.1)
-    ax.annotate(f"sampling period {Ts:.0f} ms", (0.5, Ts), xycoords=("axes fraction", "data"),
-                fontsize=6.4, ha="center", va="bottom", color=C_PATH)
-    # Reference generation is far too small a slice to see; state it instead.
-    pfa = np.mean([report[s["key"]]["t_pfa"] for s in FR.EXPERIMENTS])
-    ax.annotate(f"reference generation\n{pfa:.1f} ms ({100*pfa/tot.mean():.1f}%)",
-                (0.03, 0.44), xycoords="axes fraction", fontsize=6.2,
-                color=C_TRACTOR, ha="left", va="center")
-    ax.set_ylabel("solve time per step (ms)")
-    ax.set_ylim(0, max(Ts, tot.max()) * 1.22)
+    ax.annotate(f"$T_s$ = {Ts:.0f} ms", (0.99, Ts), xycoords=("axes fraction", "data"),
+                xytext=(0, 2), textcoords="offset points",
+                fontsize=6.4, ha="right", va="bottom", color=C_PATH)
+    ax.set_ylabel("time per step (ms)")
+    ax.set_ylim(0, max(Ts, tot.max()) * 1.5)
     ax.tick_params(axis="x", labelsize=7.5)
-    ax.legend(fontsize=6.0, loc="upper right", ncol=2, columnspacing=0.9,
-              handletextpad=0.4, borderpad=0.25)
+    ax.legend(fontsize=6.0, loc="upper left", ncol=2, columnspacing=0.9,
+              handletextpad=0.4, borderpad=0.25, frameon=False)
     ax.set_title("measured on the vehicle", fontsize=8, loc="left")
     save(fig, "field_summary")
 
@@ -144,5 +143,5 @@ def figure_summary(rows, report):
 if __name__ == "__main__":
     rows = FR.load()
     report = json.load(open(os.path.join(OUT, "field_report.json")))
-    figure_trajectories(rows)
+    figure_trajectories(rows, report)
     figure_summary(rows, report)

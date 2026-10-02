@@ -16,7 +16,8 @@ from __future__ import annotations
 import numpy as np
 import matplotlib.pyplot as plt
 
-from common import C_GREY, C_LAST, C_MID, C_PATH, C_REF, C_TRACTOR, dump, g2t, save, seg_colours, seg_label
+from common import (C_GREY, C_LAST, C_MID, C_PATH, C_REF, C_TRACTOR, dump, g2t, save, seg_colours,
+                    seg_label, study_path, t_final_for)
 
 from gntpf import RefGenWeights, SensorModel, SimConfig, TrackingNMPC, make_path, simulate
 
@@ -24,9 +25,10 @@ U_LB, U_UB = np.array([-2.0, -2.0]), np.array([2.0, 2.0])
 BETA_MAX = np.deg2rad(80.0)
 
 
-def run(path_name="rounded_rect", t_final=48.0, sigma=1.2, seed=0):
+def run(path_name="rounded_rect", sigma=1.2, seed=0):
     model = g2t()
-    path = make_path(path_name)
+    path = study_path(path_name, model)
+    t_final = t_final_for(path, sigma)
     du = model.Ts * np.array([6.0, 3.0])
     nmpc = TrackingNMPC(model, Nc=20)
     sensors = SensorModel(sigma=np.concatenate(
@@ -50,7 +52,8 @@ def figure(model, path, res, du, name="s3_inputs"):
         ax.axhline(b, color=C_GREY, ls=":", lw=0.8)
     ax.set_ylabel("control input")
     ax.legend(ncol=2)
-    sat = 100.0 * np.mean(np.any(np.abs(res.u) > 0.98 * U_UB[:, None], axis=0))
+    kk = res.masks()[0][0]                     # samples inside the evaluation span
+    sat = 100.0 * np.mean(np.any(np.abs(res.u[:, kk]) > 0.98 * U_UB[:, None], axis=0))
     ax.set_title(f"inputs saturated for {sat:.1f}% of the run", fontsize=8.5)
 
     ax = axes[1]
@@ -81,12 +84,18 @@ def figure(model, path, res, du, name="s3_inputs"):
     ax.legend(ncol=2, fontsize=7)
     save(fig, name)
 
+    M, C = res.masks()                           # per segment: evaluated, and curved
+    S = M & ~C                                   # evaluated and straight
     return {
         "saturation_pct": float(sat),
         "u_max": res.u.max(axis=1), "u_min": res.u.min(axis=1),
-        "beta_max_deg": float(np.rad2deg(np.abs(res.q[model.i_beta]).max())),
-        "ref_dev_max": float(res.ref_dev.max()),
-        "ref_dev_mean": float(res.ref_dev.mean()),
+        "beta_max_deg": float(np.rad2deg(np.abs(res.q[model.i_beta][:, kk]).max())),
+        "ref_dev_max": float(res.ref_dev[:, kk].max()),
+        "ref_dev_mean": float(res.ref_dev[:, kk].mean()),
+        "ref_dev_max_straight": float(res.ref_dev[S].max()) if S.any() else float("nan"),
+        "ref_dev_mean_straight": float(res.ref_dev[S].mean()) if S.any() else float("nan"),
+        "ref_dev_max_curved": float(res.ref_dev[C].max()) if C.any() else float("nan"),
+        "ref_dev_mean_curved": float(res.ref_dev[C].mean()) if C.any() else float("nan"),
         **{k: v for k, v in res.summary().items() if isinstance(v, (float, int))},
     }
 
@@ -95,8 +104,8 @@ if __name__ == "__main__":
     # The file names say which path each run used.  An earlier version called the
     # rounded-rectangle run "_headland", which is the agricultural path's feature,
     # and the numbers quoted in the paper come from the unsuffixed file.
-    for pname, tf, sig, name in [("agricultural", 160.0, 1.0, "s3_inputs"),
-                                 ("rounded_rect", 105.0, 1.2, "s3_inputs_rounded_rect")]:
+    for pname, sig, name in [("agricultural", 1.0, "s3_inputs"),
+                             ("rounded_rect", 1.2, "s3_inputs_rounded_rect")]:
         print(f"[S3] control inputs -- {pname}", flush=True)
-        model, path, res, du = run(pname, t_final=tf, sigma=sig)
+        model, path, res, du = run(pname, sigma=sig)
         dump(figure(model, path, res, du, name), name)

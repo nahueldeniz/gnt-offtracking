@@ -1,0 +1,7 @@
+{
+  "cpu": "13th Gen Intel(R) Core(TM) i7-13620H",
+  "cores": 16,
+  "os": "Linux 6.8.0-138-generic",
+  "python": "3.10.12",
+  "casadi": "3.7.2"
+}

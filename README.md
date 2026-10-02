@@ -82,20 +82,23 @@ What is and is not reproducible from this repository:
   released data set rather than of this repository (see below). Without them the
   field macros expand to placeholders and the field studies are skipped.
 
-Run durations give the *last trailer* at least two laps of a closed path, or two
-traversals of the open agricultural path, inside the averaging window, i.e.
-after the first 15 % of each run is discarded as transient. `RUNNING_LOCALLY.md`
-lists them per study, with expected timings.
+Every path is preceded by a lead-in, on which the start-up transient is not
+evaluated, and followed by a run-out; closed paths are traversed twice and the
+open agricultural path once, and each segment is evaluated only while its own
+projection lies inside those traversals. A run whose tractor falls more than two
+vehicle lengths behind the progress point for five seconds is reported as not
+completed and excluded from the averages. `RUNNING_LOCALLY.md` gives the details
+and the expected timings.
 
 | Script | Question it answers |
 |---|---|
-| `s1_baseline.py` | How does referencing every segment compare with tractor-only, last-trailer-only and middle-segment-only weightings, under identical conditions? |
+| `s1_baseline.py` | How does the proposed generator behave when its weight is spread evenly along the chain, or concentrated on the tractor, the middle segment or the last trailer? |
 | `s2_estimator.py` | Does the moving horizon estimator earn its cost against an EKF with matched covariances? |
 | `s3_inputs.py` | Do the inputs saturate, do the joint angles approach the jackknife limit, and where does the generated reference leave the path? |
 | `s4_scaling.py` | What does a solve cost, and beyond how many trailers is it no longer real time? |
 | `s5_robustness.py` | How does off-tracking degrade under measurement noise, kinematic parameter error and actuator slip? |
 | `s6_corridor_design.py` | How wide a corridor does the vehicle need, and how far can the weighting move it? |
-| `s7_varying_n.py` | What happens when trailers are detached mid-run? |
+| `s7_varying_n.py` | What happens when trailers are detached mid-run, compared with a vehicle that has two trailers throughout? |
 | `s8_comparison.py` | How does the method compare with the reconstruction of Michalek & Pazderski (EJC 2021), and with pure pursuit? |
 | `s9_reachability.py` | How large is the reachability residual $e_r$ of Eq. (11) -- how close is each reference to a configuration reachable from the previous one? |
 | `verification.py` | What are the measured model-verification residuals quoted in the paper? |

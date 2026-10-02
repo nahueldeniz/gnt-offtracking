@@ -10,7 +10,7 @@
 #
 # Studies whose results include a measured solve time run serially and alone,
 # because a time measured on an oversubscribed machine means nothing:
-#   s1 (cost of a step per weighting), s2 (cost of the estimator),
+#   s2 (cost of the estimator),
 #   s4 (the scaling study), s8 (online cost), s3, s7.
 # The two large sweeps, s5 and s6, report no timing and run in parallel.
 set -u
@@ -24,11 +24,12 @@ run () {  # run <script> <jobs>
   GNT_JOBS=$2 python3 "$1.py" || echo "!!! $1 FAILED"
 }
 
+run machine_info 1
 run verification 1
 run s5_robustness "$JOBS"
 run s6_corridor_design "$JOBS"
 run s9_reachability "$JOBS"
-run s1_baseline 1
+run s1_baseline "$JOBS"
 run s2_estimator 1
 run s3_inputs 1
 run s7_varying_n 1

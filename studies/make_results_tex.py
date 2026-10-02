@@ -8,6 +8,7 @@ text can drift away from the run that produced it.  Writes ``results.tex``,
 from __future__ import annotations
 
 import json
+import sys
 import math
 import os
 
@@ -40,6 +41,22 @@ def fmt(x, n=2):
 
 def macro(name, value):
     return f"\\newcommand{{\\{name}}}{{{value}}}\n"
+
+
+def diverged_note(n: int, total: int, what: str = "runs") -> str:
+    """A sentence reporting runs in which the vehicle lost its reference, or nothing."""
+    if not n:
+        return ""
+    return (f" In {n} of the {total} {what} the vehicle lost its reference; those runs are "
+            f"excluded from the averages above.")
+
+
+def fails_note(n: int) -> str:
+    """A sentence reporting solves that did not terminate successfully, or nothing."""
+    if not n:
+        return ""
+    return (f" Across these runs, {n} solves did not terminate successfully; in each case "
+            f"the last iterate was used and the run continued.")
 
 
 def PENDING(what):
@@ -80,43 +97,28 @@ def main():
         share = 100.0 * rows[-1]["t_ref"] / rows[-1]["t_tot"]
         tex.append(macro("RefSharePct", fmt(share, 1)))
 
-        # Flag any step where the solve time grows far faster than the problem
-        # does.  Such a jump is a property of the solver and its linear algebra,
-        # not of the formulation, and it reproduces on one machine while being
-        # absent on another; saying so is better than leaving a reviewer to
-        # wonder whether the figure contains a mistake.
-        jump = None
-        for a, b in zip(rows, rows[1:]):
-            g_t = b["t_mpc"] / max(a["t_mpc"], 1e-9)
-            g_n = b["n_var_mpc"] / max(a["n_var_mpc"], 1e-9)
-            if g_t / g_n > 2.0 and (jump is None or g_t / g_n > jump[1]):
-                jump = (b["N"], g_t / g_n, a["N"], g_t)
-        jump_note = ""
-        if jump:
-            jump_note = (
-                f" One feature of the curve is worth stating explicitly. "
-                f"Between $N={jump[2]}$ and $N={jump[0]}$ the tracking solve grows by a factor of "
-                f"{fmt(jump[3],1)} while the problem grows by less than a third, and the step "
-                f"reproduces across repeated runs on this machine. It does not appear on other "
-                f"hardware with a different CasADi and linear-algebra build, where the same "
-                f"configurations scale smoothly. It is therefore attributed to the interior-point "
-                f"solver and its sparse linear algebra rather than to the formulation; the problem "
-                f"sizes are reported alongside the times so that the two can be separated.")
-        tex.append(macro("SFourJumpNote", jump_note if jump_note else ""))
+        tex.append(macro("SFourJumpNote", ""))
+        hz = s4.get("horizon_sweep", [])
+        hz_txt = ""
+        if hz:
+            h_lo, h_hi = min(hz, key=lambda r: r["Nc"]), max(hz, key=lambda r: r["Nc"])
+            fits = [r["Nc"] for r in hz if r["t_tot"] <= Ts_ms]
+            hz_txt = (f" At $N=4$, varying the control horizon from $N_c={h_lo['Nc']}$ to "
+                      f"$N_c={h_hi['Nc']}$ changes the total from "
+                      f"\\SI{{{fmt(h_lo['t_tot'],1)}}}{{\\milli\\second}} to "
+                      f"\\SI{{{fmt(h_hi['t_tot'],1)}}}{{\\milli\\second}}"
+                      + (f"; the step fits in the sampling period for $N_c\\leq{max(fits)}$."
+                         if fits else ", above the sampling period for every horizon tested."))
         tex.append(macro("SFourNarrative", (
             f"Reference generation costs between \\SI{{{fmt(ref_lo,1)}}}{{\\milli\\second}} and "
-            f"\\SI{{{fmt(ref_hi,1)}}}{{\\milli\\second}} across the whole sweep, growing slowly "
-            f"because its size is independent of the horizon; at $N={n_max}$ it accounts for only "
-            f"{fmt(share,1)}\\,\\% of the total. The tracking problem grows from "
-            f"\\SI{{{fmt(mpc_lo,1)}}}{{\\milli\\second}} to \\SI{{{fmt(mpc_hi,1)}}}{{\\milli\\second}} "
-            f"over the same range and is what limits the scheme. On this hardware and with the "
-            f"open-source linear solver, the total stays within the "
-            f"\\SI{{50}}{{\\milli\\second}} sampling period up to $N={n_rt}$; beyond that the sampling "
-            f"period must be lengthened, the horizon shortened, or a faster linear solver used. "
-            f"This is a property of the implementation, not of the formulation, and the problem "
-            f"sizes in the centre panel allow the result to be scaled to other hardware. "
-            f"Reducing $N_c$ recovers real-time operation at larger $N$ at the cost of tracking "
-            f"quality, which is the trade-off the right-hand panel quantifies." + jump_note)))
+            f"\\SI{{{fmt(ref_hi,1)}}}{{\\milli\\second}} across the sweep, its size being "
+            f"independent of the horizon; at $N={n_max}$ it accounts for "
+            f"{fmt(share,1)}\\,\\% of the total. The tracking problem takes from "
+            f"\\SI{{{fmt(rows[0]['t_mpc'],1)}}}{{\\milli\\second}} at $N={rows[0]['N']}$ to "
+            f"\\SI{{{fmt(rows[-1]['t_mpc'],1)}}}{{\\milli\\second}} at $N={rows[-1]['N']}$ "
+            f"and is what limits the scheme: with the open-source linear solver on this machine, the "
+            f"total stays within the \\SI{{50}}{{\\milli\\second}} sampling period up to $N={n_rt}$."
+            + hz_txt)))
     else:
         # No plausible-looking fallback here.  NmaxTested appears in the abstract
         # and in the contributions list, so a quiet default would read as a
@@ -129,383 +131,448 @@ def main():
         tex.append(macro("SFourJumpNote", ""))
         notes.append("s4 missing")
 
-    # ------------------------------------------------------------------- S1
-    # The ablation reported in the paper is the rounded-rectangle case; the
-    # agricultural variant, when it has been run, is quoted alongside it.
-    s1 = load("s1_baseline_agri") or load("s1_baseline")
-    s1_rect = load("s1_baseline") if load("s1_baseline_agri") else None
-    if s1:
-        prop = s1["proposed"]
-        others = [k for k in s1 if k != "proposed"]
-        best_base = min(others, key=lambda k: s1[k]["worst_curved"])
-        imp = 100.0 * (1 - prop["worst_curved"] / s1[best_base]["worst_curved"])
-        nice = {"tractor": "tractor-only", "last": "last-trailer-only",
-                "guidance": "middle-segment-only"}
-        drift = max(others, key=lambda k: s1[k]["mean_curved"][0])
-        # Only the last-trailer-only weighting is worth remarking on here: it is the
-        # one whose objective is the last trailer's position.
-        better_last = [k for k in ("last",)
-                       if s1[k]["mean_curved"][-1] < prop["mean_curved"][-1]]
-        sent = (
-            f"Weighting every segment holds the worst segment's mean off-tracking in the curved "
-            f"sections to \\SI{{{fmt(prop['worst_curved'],3)}}}{{\\metre}}, against "
-            f"\\SI{{{fmt(s1[best_base]['worst_curved'],3)}}}{{\\metre}} for the best of the three "
-            f"single-point weightings ({nice[best_base]}), a difference of {fmt(imp,0)}\\,\\%. "
-            f"The weightings that leave the front of the chain unreferenced fail in the manner "
-            f"the degeneracy predicts, and they fail at the front: the {nice[drift]} weighting "
-            f"leaves the tractor deviating by "
-            f"\\SI{{{fmt(s1[drift]['mean_curved'][0],2)}}}{{\\metre}}, which is not a trade-off "
-            f"between segments but a reference that has drifted off the path altogether. "
-            f"Referencing the tractor alone leaves the trailers to trail it: they deviate by "
-            f"\\SI{{{fmt(max(s1['tractor']['mean_curved'][1:]),3)}}}{{\\metre}} against "
-            f"\\SI{{{fmt(max(prop['mean_curved'][1:]),3)}}}{{\\metre}} when every segment is "
-            f"referenced, which is the cost of an objective that describes one segment of the "
-            f"vehicle.")
-        if better_last:
-            names = " and ".join(nice[k] for k in better_last)
-            sent += (
-                f" The {names} weighting places the last trailer closer to the path than the even "
-                f"weighting does, which is what devoting the whole objective to one segment "
-                f"achieves; the comparison that matters is therefore against a method engineered "
-                f"for that objective, and not against a degenerate case of this one.")
-        if s1_rect:
-            pr, orr = s1_rect["proposed"], [k for k in s1_rect if k != "proposed"]
-            br = min(orr, key=lambda k: s1_rect[k]["worst_curved"])
-            sent += (f" The same comparison on the rounded rectangle, whose turns the chain "
-                     f"negotiates without leaving the path, is "
-                     f"\\SI{{{fmt(pr['worst_curved'],3)}}}{{\\metre}} against "
-                     f"\\SI{{{fmt(s1_rect[br]['worst_curved'],3)}}}{{\\metre}} for "
-                     f"{nice[br]}: where the geometry does not stress the chain, driving the "
-                     f"tractor alone is enough, and the distribution of the reference is worth "
-                     f"little.")
-        tex.append(macro("SOneNarrative", sent))
+    # --------------------------------------------------------------- paths
+    # Path facts quoted in the text are computed from the generators, so that the
+    # description cannot drift from the geometry that was simulated.
+    try:
+        sys.path.insert(0, os.path.dirname(HERE))
+        from gntpf import make_path as _mp
+        agri, rect, lemn, rho = (_mp("agricultural"), _mp("rounded_rect"),
+                                 _mp("lemniscate"), _mp("square"))
+        corners = rho.xy[:, [0, rho.xy.shape[1] // 4]]
+        tex.append(macro("AgriLength", fmt(agri.length, 1)))
+        tex.append(macro("RectLength", fmt(rect.length, 1)))
+        tex.append(macro("LemnLength", fmt(lemn.length, 1)))
+        tex.append(macro("RhombusSide", fmt(float(np.hypot(*(corners[:, 1] - corners[:, 0]))), 1)))
+    except Exception as exc:                      # noqa: BLE001 -- report, never guess
+        for nme in ("AgriLength", "RectLength", "LemnLength", "RhombusSide"):
+            tex.append(macro(nme, "\\textbf{[??]}"))
+        notes.append("path facts: " + repr(exc))
 
-        rows = [("Agricultural path", s1)] if not s1_rect else \
-               [("Agricultural path", s1), ("Rounded rectangle", s1_rect)]
-        lines = ["\\begin{tabular}{@{}lcc@{}}", "\\toprule",
-                 "Weighting & Worst segment & Max \\\\",
-                 " & mean (m) & (m) \\\\", "\\midrule"]
-        for gi, (title, data) in enumerate(rows):
-            if gi:
-                lines.append("\\addlinespace")
-            lines.append(f"\\multicolumn{{3}}{{@{{}}l}}{{\\textit{{{title}}}}} \\\\")
-            for k, label in (("tractor", "Tractor only"), ("last", "Last trailer only"),
-                             ("guidance", "Middle segment only"),
-                             ("proposed", "All segments (proposed)")):
-                r = data[k]
-                f = (lambda t: f"\\textbf{{{t}}}") if k == "proposed" else (lambda t: t)
-                lines.append(f"\\quad {f(label)} & {f(fmt(r['worst_curved'],3))} & "
-                             f"{f(fmt(r['worst_curved_max'],3))} \\\\")
-        lines += ["\\bottomrule", "\\end{tabular}"]
-        with open(os.path.join(PAPER, "tab_s1.tex"), "w") as fh:
-            fh.write("\n".join(lines) + "\n")
-    else:
-        tex.append(macro("SOneNarrative", PENDING("S1")))
-        notes.append("s1 missing")
-        with open(os.path.join(PAPER, "tab_s1.tex"), "w") as fh:
-            fh.write("\\begin{tabular}{@{}lccc@{}}\n\\toprule\n"
-                     "Weighting & Worst segment & Max & Solve time \\\\\n"
-                     " & mean (m) & (m) & (ms) \\\\\n\\midrule\n"
-                     "\\multicolumn{4}{c}{\\textit{S1 not yet run}} \\\\\n"
-                     "\\bottomrule\n\\end{tabular}\n")
+    # ------------------------------------------------------------- machine
+    mach = load("machine")
+    tex.append(macro("SimMachine", (f"{mach['cpu']} with {mach['cores']} logical cores, "
+                                    f"CasADi {mach['casadi']}") if mach else PENDING("machine_info")))
+
+    # ------------------------------------------------------------------- S1
+    try:
+        # Four weightings of the proposed generator, on the agricultural path and on
+        # the rounded rectangle.  A weighting whose runs lost the reference is
+        # reported as not completed, never averaged with completed ones.
+        s1 = load("s1_baseline_agri")
+        s1_rect = load("s1_baseline")
+        label = {"tractor": "Tractor emphasised", "last": "Last trailer emphasised",
+                 "guidance": "Middle segment emphasised", "proposed": "Even (proposed)"}
+        lower = {"tractor": "tractor-emphasised", "last": "last-trailer-emphasised",
+                 "guidance": "middle-emphasised", "proposed": "even"}
+
+        def s1_sentences(d, where):
+            order = ("tractor", "guidance", "last", "proposed")
+            done = [k for k in order if "worst_curved" in d[k]]
+            failed = [k for k in order if "worst_curved" not in d[k]]
+            out = []
+            if "proposed" in done:
+                alts = [k for k in done if k != "proposed"]
+                txt = (f"On {where}, the worst segment's mean off-tracking in the curved sections is "
+                       f"\\SI{{{fmt(d['proposed']['worst_curved'],3)}}}{{\\metre}} with the even "
+                       f"weighting")
+                if alts:
+                    best = min(alts, key=lambda k: d[k]["worst_curved"])
+                    rel = 100.0 * (1 - d["proposed"]["worst_curved"] / d[best]["worst_curved"])
+                    val = f"\\SI{{{fmt(d[best]['worst_curved'],3)}}}{{\\metre}}"
+                    if abs(rel) < 1.5:
+                        txt += (f" and {val} with the {lower[best]} one; the two are "
+                                f"practically equal")
+                    else:
+                        txt += (f", {fmt(abs(rel),0)}\\,\\% {'less' if rel > 0 else 'more'} than "
+                                f"the {val} of the {lower[best]} one")
+                out.append(txt + ".")
+            if failed:
+                names = " and the ".join(lower[k] for k in failed)
+                covered = " and ".join(f"{fmt(100.0 * max(d[k]['progress']),0)}\\,\\%"
+                                       for k in failed)
+                many = len(failed) > 1
+                out.append(
+                    f"The {names} weighting{'s' if many else ''} lost the reference in every run: "
+                    f"the tractor fell more than two vehicle lengths behind the progress point "
+                    f"before the last trailer had covered {covered} of the path"
+                    + (", respectively." if many else "."))
+            for k in [k for k in done if d[k].get("n_diverged", 0)]:
+                out.append(f"The {lower[k]} weighting lost the reference in {d[k]['n_diverged']} of "
+                           f"{d[k]['n_runs']} runs; its values are over the runs that completed.")
+            return " ".join(out)
+
+        if s1:
+            sent = s1_sentences(s1, "the agricultural path")
+            if s1_rect:
+                sent += " " + s1_sentences(s1_rect, "the rounded rectangle")
+            tex.append(macro("SOneNarrative", sent))
+
+            rows = [("Agricultural path", s1)] + ([("Rounded rectangle", s1_rect)] if s1_rect else [])
+            lines = ["\\begin{tabular}{@{}lccc@{}}", "\\toprule",
+                     "Weighting & Worst segment & Max & Unsuccessful \\\\",
+                     " & mean (m) & (m) & solves \\\\", "\\midrule"]
+            for gi, (title, data) in enumerate(rows):
+                if gi:
+                    lines.append("\\addlinespace")
+                lines.append(f"\\multicolumn{{4}}{{@{{}}l}}{{\\textit{{{title}}}}} \\\\")
+                for k in ("tractor", "last", "guidance", "proposed"):
+                    r = data[k]
+                    bold = (lambda t: f"\\textbf{{{t}}}") if k == "proposed" else (lambda t: t)
+                    if "worst_curved" in r:
+                        note = (f"$^{{\\ast}}$" if r.get("n_diverged", 0) else "")
+                        lines.append(f"\\quad {bold(label[k])}{note} & "
+                                     f"{bold(fmt(r['worst_curved'],3))} & "
+                                     f"{bold(fmt(r['worst_curved_max'],3))} & {r.get('fails', 0)} \\\\")
+                    else:
+                        lines.append(f"\\quad {label[k]} & \\multicolumn{{2}}{{c}}{{did not "
+                                     f"complete ({fmt(100.0 * max(r['progress']),0)}\\,\\%)}} & "
+                                     f"{r.get('fails', 0)} \\\\")
+            lines += ["\\bottomrule", "\\end{tabular}"]
+            with open(os.path.join(PAPER, "tab_s1.tex"), "w") as fh:
+                fh.write("\n".join(lines) + "\n")
+        else:
+            tex.append(macro("SOneNarrative", PENDING("S1")))
+            notes.append("s1 missing")
+            with open(os.path.join(PAPER, "tab_s1.tex"), "w") as fh:
+                fh.write("\\begin{tabular}{@{}lcc@{}}\n\\toprule\n"
+                         "Weighting & Worst segment & Max \\\\\n"
+                         " & mean (m) & (m) \\\\\n\\midrule\n"
+                         "\\multicolumn{3}{c}{\\textit{S1 not yet run}} \\\\\n"
+                         "\\bottomrule\n\\end{tabular}\n")
+    except (KeyError, TypeError, ValueError, IndexError) as exc:
+        tex.append(macro("SOneNarrative", "\\textbf{[S1: the data contain runs that did not complete; see out/ -- " + type(exc).__name__ + "]}"))
+        notes.append("S1 could not be summarised automatically: " + repr(exc))
 
     # ------------------------------------------------------------------- S2
-    s2 = load("s2_estimator")
-    if s2:
-        def g(reg, est, key):
-            return s2[f"{reg}/{est}"][key]
-        ratio_clean = g("clean", "ekf", "rmse") / max(g("clean", "nmhe", "rmse"), 1e-12)
-        ratio_out = g("outliers", "ekf", "rmse") / max(g("outliers", "nmhe", "rmse"), 1e-12)
-        inf_ekf = g("limit", "ekf", "infeasible_pct")
-        inf_mhe = g("limit", "nmhe", "infeasible_pct")
-        cost = g("clean", "nmhe", "solve_ms") / max(g("clean", "ekf", "solve_ms"), 1e-12)
-        if ratio_clean < 1.3:
-            clean_txt = (
-                f"Under bounded noise alone the two are comparable "
-                f"(\\SI{{{fmt(g('clean','nmhe','rmse'),4)}}}{{\\metre}} against "
-                f"\\SI{{{fmt(g('clean','ekf','rmse'),4)}}}{{\\metre}} RMSE), and on this evidence "
-                f"the extra cost of the estimator would not be justified by accuracy alone.")
+    try:
+        s2 = load("s2_estimator")
+        if s2:
+            def g(reg, est, key):
+                return s2[f"{reg}/{est}"][key]
+            ratio_clean = g("clean", "ekf", "rmse") / max(g("clean", "nmhe", "rmse"), 1e-12)
+            ratio_out = g("outliers", "ekf", "rmse") / max(g("outliers", "nmhe", "rmse"), 1e-12)
+            inf_ekf = g("limit", "ekf", "infeasible_pct")
+            inf_mhe = g("limit", "nmhe", "infeasible_pct")
+            cost = g("clean", "nmhe", "solve_ms") / max(g("clean", "ekf", "solve_ms"), 1e-12)
+            if ratio_clean < 1.3:
+                clean_txt = (
+                    f"Under bounded noise alone the two are comparable "
+                    f"(\\SI{{{fmt(g('clean','nmhe','rmse'),4)}}}{{\\metre}} against "
+                    f"\\SI{{{fmt(g('clean','ekf','rmse'),4)}}}{{\\metre}} RMSE), and on this evidence "
+                    f"the extra cost of the estimator would not be justified by accuracy alone.")
+            else:
+                seg = lambda reg, est: np.asarray(g(reg, est, "rmse_per_seg"), dtype=float)
+                tr_e, tr_m = seg("clean", "ekf")[1:], seg("clean", "nmhe")[1:]
+                wt_e, wt_m = seg("clean", "ekf")[1:].max(), seg("clean", "nmhe")[1:].max()
+                clean_txt = (
+                    f"Under bounded noise alone both reconstruct the measured tractor position, "
+                    f"with an RMSE of \\SI{{{fmt(seg('clean','ekf')[0],4)}}}{{\\metre}} for the "
+                    f"filter and \\SI{{{fmt(seg('clean','nmhe')[0],4)}}}{{\\metre}} for the "
+                    f"estimator. They differ in the unmeasured trailer positions: on the worst "
+                    f"trailer the RMSE of the filter is \\SI{{{fmt(wt_e,4)}}}{{\\metre}}, against "
+                    f"\\SI{{{fmt(wt_m,4)}}}{{\\metre}} for the estimator, "
+                    f"{fmt(wt_e/max(wt_m,1e-12),1)} times larger, "
+                    f"in agreement with \\cite{{deniz2023absolute}}.")
+            wt = lambda reg, est: float(np.max(g(reg, est, "rmse_per_seg")[1:]))
+            tex.append(macro("STwoNarrative", (
+                f"{clean_txt} With gross errors on the joint-angle encoders the RMSE of the filter "
+                f"on the worst trailer rises to \\SI{{{fmt(wt('outliers','ekf'),4)}}}{{\\metre}}, "
+                f"while that of the estimator remains "
+                f"\\SI{{{fmt(wt('outliers','nmhe'),4)}}}{{\\metre}}. On the rhombus the corresponding "
+                f"values are \\SI{{{fmt(wt('limit','ekf'),4)}}}{{\\metre}} and "
+                f"\\SI{{{fmt(wt('limit','nmhe'),4)}}}{{\\metre}}. "
+                f"The cost of the estimator is a factor of {fmt(cost,0)} in solve time."
+                + fails_note(sum(v.get("fails", 0) for v in s2.values() if isinstance(v, dict)))
+                + diverged_note(sum(v.get("n_diverged", 0) for v in s2.values() if isinstance(v, dict)), 18))))
         else:
-            seg = lambda reg, est: np.asarray(g(reg, est, "rmse_per_seg"), dtype=float)
-            tr_e, tr_m = seg("clean", "ekf")[1:], seg("clean", "nmhe")[1:]
-            clean_txt = (
-                f"Under bounded noise alone both reconstruct the measured tractor position "
-                f"(\\SI{{{fmt(seg('clean','nmhe')[0],4)}}}{{\\metre}} and "
-                f"\\SI{{{fmt(seg('clean','ekf')[0],4)}}}{{\\metre}} RMSE). They differ in the "
-                f"unmeasured trailer positions, where the RMSE of the filter reaches "
-                f"\\SI{{{fmt(tr_e.max(),4)}}}{{\\metre}}, against "
-                f"\\SI{{{fmt(tr_m.max(),4)}}}{{\\metre}} for the estimator, "
-                f"{fmt(tr_e.max()/max(tr_m.max(),1e-12),1)}$\\times$ larger, "
-                f"in agreement with \\cite{{deniz2023absolute}}.")
-        tex.append(macro("STwoNarrative", (
-            f"{clean_txt} With gross errors "
-            f"on the joint-angle encoders the filter's RMSE is {fmt(ratio_out,1)}$\\times$ that of "
-            f"the estimator (\\SI{{{fmt(g('outliers','ekf','rmse'),4)}}}{{\\metre}} against "
-            f"\\SI{{{fmt(g('outliers','nmhe','rmse'),4)}}}{{\\metre}}), because the bound that the "
-            f"estimator enforces on the process disturbance limits how far a single outlier can "
-            f"move the estimate, whereas the filter weights it by a covariance it does not match. "
-            + f"Near the jackknife limit the RMSE of the estimator is "
-            f"\\SI{{{fmt(g('limit','nmhe','rmse'),4)}}}{{\\metre}} against "
-            f"\\SI{{{fmt(g('limit','ekf','rmse'),4)}}}{{\\metre}} for the filter. "
-            f"The cost of the estimator is a factor of {fmt(cost,0)} in solve time.")))
-    else:
-        tex.append(macro("STwoNarrative", PENDING("S2")))
-        notes.append("s2 missing")
+            tex.append(macro("STwoNarrative", PENDING("S2")))
+            notes.append("s2 missing")
+    except (KeyError, TypeError, ValueError, IndexError) as exc:
+        tex.append(macro("STwoNarrative", "\\textbf{[S2: the data contain runs that did not complete; see out/ -- " + type(exc).__name__ + "]}"))
+        notes.append("S2 could not be summarised automatically: " + repr(exc))
 
     # ------------------------------------------------------------------- S3
-    s3 = load("s3_inputs")
-    if s3:
-        tex.append(macro("SThreeNarrative", (
-            f"The inputs remain within their bounds for "
-            f"{fmt(100.0 - s3['saturation_pct'],1)}\\,\\% of the run, the joint angles reach "
-            f"\\SI{{{fmt(s3['beta_max_deg'],1)}}}{{\\degree}} against a limit of "
-            f"\\SI{{80}}{{\\degree}}. "
-            f"The generated reference departs from the nominal path by at most "
-            f"\\SI{{{fmt(s3['ref_dev_max'],3)}}}{{\\metre}}, with a mean of "
-            f"\\SI{{{fmt(s3['ref_dev_mean'],3)}}}{{\\metre}} over the run: the reference is "
-            f"held on the path where the path is attainable and is allowed to leave it where it "
-            f"is not, which is the behaviour the reachability penalty produces.")))
-    else:
-        tex.append(macro("SThreeNarrative", PENDING("S3")))
-        notes.append("s3 missing")
+    try:
+        s3 = load("s3_inputs")
+        if s3:
+            tex.append(macro("SThreeNarrative", (
+                ("Over the evaluated part of the run neither input comes within "
+                 "\\SI{2}{\\percent} of its bounds" if s3['saturation_pct'] == 0.0 else
+                 f"Over the evaluated part of the run the inputs come within \\SI{{2}}{{\\percent}} "
+                 f"of their bounds in {fmt(s3['saturation_pct'],1)}\\,\\% of the samples")
+                + f", and the joint angles reach at most \\SI{{{fmt(s3['beta_max_deg'],1)}}}{{\\degree}} against the "
+                f"limit of \\SI{{80}}{{\\degree}}. The generated reference departs from the "
+                f"nominal path by \\SI{{{fmt(s3['ref_dev_mean_straight'],3)}}}{{\\metre}} on average "
+                f"on the straight sections and by \\SI{{{fmt(s3['ref_dev_mean_curved'],3)}}}{{\\metre}} "
+                f"in the headland turns, with a maximum of "
+                f"\\SI{{{fmt(s3['ref_dev_max'],3)}}}{{\\metre}}."
+                + fails_note(int(s3.get("ref_fail", 0) + s3.get("mpc_fail", 0) + s3.get("mhe_fail", 0))))))
+        else:
+            tex.append(macro("SThreeNarrative", PENDING("S3")))
+            notes.append("s3 missing")
+    except (KeyError, TypeError, ValueError, IndexError) as exc:
+        tex.append(macro("SThreeNarrative", "\\textbf{[S3: the data contain runs that did not complete; see out/ -- " + type(exc).__name__ + "]}"))
+        notes.append("S3 could not be summarised automatically: " + repr(exc))
 
     # ------------------------------------------------------------------- S5
-    # Schema note: s5_robustness.py records BOTH off-tracking and estimation
-    # error, as rows of {value, off, off_sd, est, est_sd, est_max}.  An older
-    # version wrote {scale, mean, sd} and only the off-tracking; a file in that
-    # form is stale and must not be mixed with the current text, so it is
-    # reported as pending rather than parsed.
-    s5 = load("s5_robustness")
-    if s5 and all(k in s5 for k in ("noise", "hitch", "slip")) \
-            and "value" in (s5["noise"][0] if s5["noise"] else {}):
-        nz, hz, sl = s5["noise"], s5["hitch"], s5["slip"]
+    try:
+        # Schema note: s5_robustness.py records BOTH off-tracking and estimation
+        # error, as rows of {value, off, off_sd, est, est_sd, est_max}.  An older
+        # version wrote {scale, mean, sd} and only the off-tracking; a file in that
+        # form is stale and must not be mixed with the current text, so it is
+        # reported as pending rather than parsed.
+        s5 = load("s5_robustness")
+        if s5 and all(k in s5 for k in ("noise", "hitch", "slip")) \
+                and "value" in (s5["noise"][0] if s5["noise"] else {}):
+            nz, hz, sl = s5["noise"], s5["hitch"], s5["slip"]
 
-        def at(rows, v):
-            return min(rows, key=lambda r: abs(r["value"] - v))
+            def at(rows, v):
+                return min(rows, key=lambda r: abs(r["value"] - v))
 
-        n0, n1 = at(nz, 1.0), nz[-1]
-        h0, h1 = at(hz, 0.0), hz[-1]
-        s1_ = sl[-1]
-        off_span = max(r["off"] for r in nz + hz + sl) - min(r["off"] for r in nz + hz + sl)
-        off_pct = 100.0 * (n1["off"] / max(n0["off"], 1e-9) - 1.0)
-        est_fac = n1["est"] / max(n0["est"], 1e-9)
-        est_fac_h = h1["est"] / max(h0["est"], 1e-9)
+            n0, n1 = at(nz, 1.0), nz[-1]
+            h0, h1 = at(hz, 0.0), hz[-1]
+            s1_ = sl[-1]
+            off_span = max(r["off"] for r in nz + hz + sl) - min(r["off"] for r in nz + hz + sl)
+            off_pct = 100.0 * (n1["off"] / max(n0["off"], 1e-9) - 1.0)
+            est_fac = n1["est"] / max(n0["est"], 1e-9)
+            est_fac_h = h1["est"] / max(h0["est"], 1e-9)
 
-        tex.append(macro("SFiveNarrative", (
-            f"The vehicle is largely insensitive to all three perturbations, whereas the estimate "
-            f"is not: across every sweep point the off-tracking spans only "
-            f"\\SI{{{fmt(off_span,3)}}}{{\\metre}}, while an eightfold increase of the noise "
-            f"multiplies the position estimation error by {fmt(est_fac,1)} and a "
-            f"{fmt(100*h1['value'],0)}\\,\\% geometry error multiplies it by "
-            f"{fmt(est_fac_h,1)}. The tractor pose is measured and the trailers follow it by "
-            f"rigid-body geometry, so a wrong chain geometry displaces the estimated trailer "
-            f"positions while the real ones stay on the path. Parameter error is therefore nearly "
-            f"harmless when the estimate only closes the loop, but it dominates when the estimate "
-            f"is used to decide clearance, and the geometry must then be calibrated.")))
-        tex.append(macro("SFiveOffSpan", fmt(off_span, 3)))
-        tex.append(macro("SFiveEstFactor", fmt(est_fac, 1)))
-        tex.append(macro("SFiveEstMax", fmt(max(r["est_max"] for r in nz + hz + sl), 3)))
-    else:
-        tex.append(macro("SFiveNarrative", PENDING("S5")))
-        for nme in ("SFiveOffSpan", "SFiveEstFactor", "SFiveEstMax"):
-            tex.append(macro(nme, "--"))
-        notes.append("s5 missing or in the old schema (re-run s5_robustness.py)")
+            tex.append(macro("SFiveNarrative", (
+                f"Across every sweep point the worst segment's off-tracking spans only "
+                f"\\SI{{{fmt(off_span,3)}}}{{\\metre}}, whereas the position estimation error grows "
+                f"with each perturbation: an eightfold increase of the noise multiplies it by "
+                f"{fmt(est_fac,1)}, and a {fmt(100*h1['value'],0)}\\,\\% error in the geometry used "
+                f"by the generator, the controller and the estimator multiplies it by "
+                f"{fmt(est_fac_h,1)}. Off-tracking, evaluated on the true positions, is practically "
+                f"unchanged by a wrong geometry, while the estimated configuration departs from the "
+                f"true one; where the estimate itself is used, for instance to check clearance, the "
+                f"geometry must be calibrated."
+                + diverged_note(sum(r.get("n_diverged", 0) for r in nz + hz + sl),
+                                4 * len(nz + hz + sl))
+                + fails_note(sum(r.get("fails", 0) for r in nz + hz + sl)))))
+            tex.append(macro("SFiveOffSpan", fmt(off_span, 3)))
+            tex.append(macro("SFiveEstFactor", fmt(est_fac, 1)))
+            tex.append(macro("SFiveEstMax", fmt(max(r["est_max"] for r in nz + hz + sl), 3)))
+        else:
+            tex.append(macro("SFiveNarrative", PENDING("S5")))
+            for nme in ("SFiveOffSpan", "SFiveEstFactor", "SFiveEstMax"):
+                tex.append(macro(nme, "--"))
+            notes.append("s5 missing or in the old schema (re-run s5_robustness.py)")
 
-    # ---------------------------------------------- S8: guidance-point sweep
-    g8 = load("s8_guidance")
-    if g8:
-        sw, pw = g8["sweep"], g8["proposed_worst"]
-        best = min(sw, key=lambda r: r["worst"])
-        worst = max(sw, key=lambda r: r["worst"])
-        gmax = max(r["guide_dev"] for r in sw)
-        names = {0.0: "on the tractor", 1.0: "on the first trailer",
-                 2.0: "on the last trailer"}
-        tex.append(macro("SEightGuidance", (
-            f"Sweeping a single guidance point along the chain separates the objective from "
-            f"the controller that usually carries it. The point itself is held to the path in "
-            f"every case---its own mean deviation never exceeds "
-            f"\\SI{{{fmt(math.ceil(gmax*1000)/1000,3)}}}{{\\metre}}---so the objective is met "
-            f"throughout and what "
-            f"follows is a statement about the objective rather than about the solver. "
-            f"With the point {names.get(best['t'], 'at ' + fmt(best['t'], 1) + ' along the chain')} "
-            f"the worst segment reaches "
-            f"\\SI{{{fmt(best['worst'],3)}}}{{\\metre}}, against "
-            f"\\SI{{{fmt(pw,3)}}}{{\\metre}} when every segment is referenced; moved to the "
-            f"least favourable location it reaches \\SI{{{fmt(worst['worst'],3)}}}{{\\metre}}, "
-            f"a factor of {fmt(worst['worst']/max(best['worst'],1e-9),1)} worse, with the point "
-            f"still on the path. The tractor is the one well-posed location, and for a structural "
-            f"reason: its pose together with the joint angles determines every other segment, so "
-            f"holding it holds the chain. Any other combination leaves a family of postures that "
-            f"place the point identically, the cost cannot choose between them, and the "
-            f"reachability constraint \\eqref{{eq:reach}} then carries whatever the solver "
-            f"settles on forward from step to step.")))
-        tex.append(macro("SEightGuideBest", fmt(best["worst"], 3)))
-        tex.append(macro("SEightGuideWorst", fmt(worst["worst"], 3)))
-        tex.append(macro("SEightGuideMaxDev", fmt(gmax, 3)))
-    else:
-        tex.append(macro("SEightGuidance", PENDING("the S8 guidance sweep")))
-        for nme in ("SEightGuideBest", "SEightGuideWorst", "SEightGuideMaxDev"):
-            tex.append(macro(nme, "--"))
-        notes.append("s8 guidance sweep missing")
+        # ---------------------------------------------- S8: guidance-point sweep
+        g8 = load("s8_guidance")
+        if g8:
+            sw_all, pw = g8["sweep"], g8["proposed_worst"]
+            sw = [r for r in sw_all if r["worst"] == r["worst"]]          # completed settings
+            best = min(sw, key=lambda r: r["worst"])
+            worst = max(sw, key=lambda r: r["worst"])
+            gmax = max(r["guide_dev"] for r in sw)
+            names = {0.0: "on the tractor", 0.5: "midway between the tractor and the first trailer",
+                     1.0: "on the first trailer", 1.5: "midway between the two trailers",
+                     2.0: "on the last trailer"}
+            where = lambda r: names.get(r["t"], "at " + fmt(r["t"], 1) + " along the chain")
+            others = [r for r in sw if r is not best]
+            s8c = load("s8_comparison")
+            lost = [r for r in sw_all if r["worst"] != r["worst"]]
+            txt = (f"In every completed setting the guidance point of the generated reference lies "
+                   f"within \\SI{{{fmt(math.ceil(gmax*1000)/1000,3)}}}{{\\metre}} of the path on "
+                   f"average. With the point {where(best)} the worst segment's mean off-tracking in "
+                   f"the curved sections is \\SI{{{fmt(best['worst'],3)}}}{{\\metre}} and the corridor "
+                   f"\\SI{{{fmt(best['corridor'],2)}}}{{\\metre}}, against "
+                   f"\\SI{{{fmt(pw,3)}}}{{\\metre}} and "
+                   f"\\SI{{{fmt(s8c['proposed']['corridor'],2) if s8c else '--'}}}{{\\metre}} when "
+                   f"every segment is referenced.")
+            if others:
+                parts = [f"with the point {where(r)}"
+                         + (" they are " if j == 0 else " ")
+                         + f"\\SI{{{fmt(r['worst'],3)}}}{{\\metre}} and "
+                           f"\\SI{{{fmt(r['corridor'],2)}}}{{\\metre}}"
+                         for j, r in enumerate(others)]
+                sent = ", and ".join(parts)
+                txt += " " + sent[0].upper() + sent[1:] + "."
+            if lost:
+                txt += (" With the point " + " and ".join(where(r) for r in lost)
+                        + " every run lost its reference.")
+            part = [r for r in sw if r.get("n_diverged", 0)]
+            for r in part:
+                txt += (f" With the point {where(r)}, {r['n_diverged']} runs lost the reference "
+                        f"and are excluded from its values.")
+            if all("fails" in r for r in sw_all):
+                txt += fails_note(sum(r["fails"] for r in sw_all))
+            else:
+                txt += " \\textbf{[guidance sweep predates the solver-failure count; re-run it]}"
+            tex.append(macro("SEightGuidance", txt))
+            tex.append(macro("SEightGuideBest", fmt(best["worst"], 3)))
+            tex.append(macro("SEightGuideWorst", fmt(worst["worst"], 3)))
+            tex.append(macro("SEightGuideMaxDev", fmt(gmax, 3)))
+        else:
+            tex.append(macro("SEightGuidance", PENDING("the S8 guidance sweep")))
+            for nme in ("SEightGuideBest", "SEightGuideWorst", "SEightGuideMaxDev"):
+                tex.append(macro(nme, "--"))
+            notes.append("s8 guidance sweep missing")
+    except (KeyError, TypeError, ValueError, IndexError) as exc:
+        tex.append(macro("SFiveNarrative", "\\textbf{[S5: the data contain runs that did not complete; see out/ -- " + type(exc).__name__ + "]}"))
+        notes.append("S5 could not be summarised automatically: " + repr(exc))
 
     # ------------------------------------------------------------------- S6
-    s6 = load("s6_corridor_design")
-    if s6:
-        sw = s6["tilt_sweep"]
-        refs = s6.get("reference_points", {})
-        c = np.array([r["corridor"] for r in sw])
-        k = np.array([r["kappa"] for r in sw])
-        w = np.array([r["worst"] for r in sw])
-        lo, hi = sw[int(np.argmin(c))], sw[int(np.argmax(c))]
-        mono = bool(np.all(np.diff(c) > -1e-9) or np.all(np.diff(c) < 1e-9))
-        # Quote the span of the *printed* endpoints, so that the sentence is
-        # arithmetically self-consistent at the precision it is written to.
-        span = float(round(c.max(), 2) - round(c.min(), 2))
-        seg_span = float(max(
-            max(r["per_seg"][i] for r in sw) - min(r["per_seg"][i] for r in sw)
-            for i in range(len(sw[0]["per_seg"]))))
-        best = f"\\SI{{{fmt(c.min(),2)}}}{{\\metre}}"
-        # Quote the comparison corridors from S8, not from S6's own reference
-        # points: S8 fits the reconstruction with a finer Fourier basis, and one
-        # method on one path must not appear in the paper with two values.  S6's
-        # reference points are kept for the figure markers only.
-        alt = ""
-        s8ref0 = load("s8_comparison")
-        src = s8ref0 if s8ref0 else refs
-        if src:
-            nm = {"pursuit": "pure pursuit", "mp2021": "the reconstruction of \\cite{michalek2021reconstruction}"}
-            parts = [f"{nm[t]} requires \\SI{{{fmt(src[t]['corridor'],2)}}}{{\\metre}}"
-                     for t in ("pursuit", "mp2021") if t in src]
-            if parts:
-                alt = " For the same path, " + " and ".join(parts) + "."
-        # How big is the knob compared with the gap to a single-output method?
-        # If the tuning range is small next to that gap, the paper should say so
-        # rather than lead with the knob.
-        ratio = None
-        s8ref = load("s8_comparison")
-        if s8ref and "mp2021" in s8ref and "proposed" in s8ref:
-            gap = s8ref["mp2021"]["corridor"] - s8ref["proposed"]["corridor"]
-            if span > 1e-9:
-                ratio = gap / span
-        scale = ""
-        if ratio is not None:
-            verdict = ("The weighting is a trim rather than the main effect, and we present it as one."
-                       if ratio >= 3.0 else
-                       "The two effects are therefore of comparable size: referencing every segment "
-                       "is what buys most of the reduction, and the weighting then commands a further "
-                       "adjustment of the same order, which is worth having but is not the larger "
-                       "part of the claim.")
-            scale = (f" That range should be read against the gap it sits inside: referencing every "
-                     f"segment at all narrows the corridor by \\SI{{{fmt(gap,2)}}}{{\\metre}} relative "
-                     f"to the single-output reconstruction of \\cite{{michalek2021reconstruction}}, about "
-                     f"{fmt(ratio,1)} times the span the weighting itself commands. {verdict}")
-        tex.append(macro("SSixNarrative", (
-            f"Moving the emphasis along the chain moves the corridor with it, "
-            f"{'monotonically' if mono else 'though not monotonically across the whole range'}: "
-            f"the swept width ranges from "
-            f"\\SI{{{fmt(c.min(),2)}}}{{\\metre}} at $\\kappa={fmt(lo['kappa'],0)}$ to "
-            f"\\SI{{{fmt(c.max(),2)}}}{{\\metre}} at $\\kappa={fmt(hi['kappa'],0)}$, a span of "
-            f"\\SI{{{fmt(span,2)}}}{{\\metre}}.{alt} "
-            f"The redistribution among segments that produces this is real but modest: no segment's "
-            f"mean deviation moves by more than \\SI{{{fmt(seg_span,3)}}}{{\\metre}} across the whole "
-            f"sweep, and the worst segment ranges only from \\SI{{{fmt(w.min(),3)}}}{{\\metre}} to "
-            f"\\SI{{{fmt(w.max(),3)}}}{{\\metre}}. The weighting is therefore best understood as a "
-            f"corridor-width control rather than as a way of moving a large error from one segment to "
-            f"another, and it is the corridor that decides whether the vehicle fits." + scale)))
-        tex.append(macro("SSixCorridorMin", fmt(c.min(), 2)))
-        tex.append(macro("SSixCorridorMax", fmt(c.max(), 2)))
-    else:
-        tex.append(macro("SSixNarrative", PENDING("S6")))
-        tex.append(macro("SSixCorridorMin", "--"))
-        tex.append(macro("SSixCorridorMax", "--"))
-        notes.append("s6 missing")
+    try:
+        s6 = load("s6_corridor_design")
+        if s6:
+            sw = s6["tilt_sweep"]
+            refs = s6.get("reference_points", {})
+            c = np.array([r["corridor"] for r in sw])
+            k = np.array([r["kappa"] for r in sw])
+            w = np.array([r["worst"] for r in sw])
+            seg_span = float(max(
+                max(r["per_seg"][i] for r in sw) - min(r["per_seg"][i] for r in sw)
+                for i in range(len(sw[0]["per_seg"]))))
+            # Quote the comparison corridors from S8, not from S6's own reference
+            # points: S8 fits the reconstruction with a finer Fourier basis, and one
+            # method on one path must not appear in the paper with two values.  S6's
+            # reference points are kept for the figure markers only.
+            alt = ""
+            s8ref0 = load("s8_comparison")
+            src = s8ref0 if s8ref0 else refs
+            if src:
+                nm = {"pursuit": "pure pursuit", "mp2021": "the reconstruction of \\cite{michalek2021reconstruction}"}
+                parts = [f"{nm[t]} requires \\SI{{{fmt(src[t]['corridor'],2)}}}{{\\metre}}"
+                         for t in ("pursuit", "mp2021") if t in src]
+                if parts:
+                    alt = " For the same path, " + " and ".join(parts) + "."
+            # describe each side of the sweep separately, from the data
+            k0 = int(np.argmin(np.abs(k)))
+            pos, neg = c[k0:], c[:k0 + 1]
+            pos_mono = bool(np.all(np.diff(pos) > -1e-9))
+            pos_txt = (f"Tilting the weight towards the last trailer widens the corridor"
+                       f"{' monotonically' if pos_mono else ''}, from "
+                       f"\\SI{{{fmt(c[k0],2)}}}{{\\metre}} at $\\kappa=0$ to "
+                       f"\\SI{{{fmt(c[-1],2)}}}{{\\metre}} at $\\kappa={fmt(k[-1],0)}$, whereas "
+                       f"tilting it towards the tractor keeps it between "
+                       f"\\SI{{{fmt(neg.min(),2)}}}{{\\metre}} and \\SI{{{fmt(neg.max(),2)}}}{{\\metre}}.")
+            last0, lastK = sw[k0]["per_seg"][-1], sw[-1]["per_seg"][-1]
+            last_txt = ""
+            if lastK > last0:
+                last_txt = (f" Weighting the last trailer more heavily does not reduce its "
+                            f"off-tracking: at $\\kappa={fmt(k[-1],0)}$ it is "
+                            f"\\SI{{{fmt(lastK,3)}}}{{\\metre}}, against "
+                            f"\\SI{{{fmt(last0,3)}}}{{\\metre}} at $\\kappa=0$.")
+            tex.append(macro("SSixNarrative", (
+                pos_txt + last_txt + alt +
+                f" Across the sweep no segment's mean deviation moves by more than "
+                f"\\SI{{{fmt(seg_span,3)}}}{{\\metre}}, and the worst segment ranges from "
+                f"\\SI{{{fmt(w.min(),3)}}}{{\\metre}} to \\SI{{{fmt(w.max(),3)}}}{{\\metre}}."
+                + diverged_note(sum(r.get("n_diverged", 0) for r in sw), 3 * len(sw))
+                + fails_note(sum(r.get("fails", 0) for r in sw)))))
+            tex.append(macro("SSixCorridorMin", fmt(c.min(), 2)))
+            tex.append(macro("SSixCorridorMax", fmt(c.max(), 2)))
+        else:
+            tex.append(macro("SSixNarrative", PENDING("S6")))
+            tex.append(macro("SSixCorridorMin", "--"))
+            tex.append(macro("SSixCorridorMax", "--"))
+            notes.append("s6 missing")
+    except (KeyError, TypeError, ValueError, IndexError) as exc:
+        tex.append(macro("SSixNarrative", "\\textbf{[S6: the data contain runs that did not complete; see out/ -- " + type(exc).__name__ + "]}"))
+        notes.append("S6 could not be summarised automatically: " + repr(exc))
 
     # ------------------------------------------------------------------- S8
-    s8 = load("s8_comparison")
-    if s8:
-        P, M, U = s8["proposed"], s8.get("mp2021"), s8.get("pursuit")
-        def last(d):
-            return d["mean_curved"][-1]
-        tex.append(macro("SEightNarrative", (
-            f"On the field geometry the reconstruction of \\cite{{michalek2021reconstruction}} places "
-            f"the last trailer better than the proposed formulation does---"
-            f"\\SI{{{fmt(last(M),3)}}}{{\\metre}} against \\SI{{{fmt(last(P),3)}}}{{\\metre}} mean "
-            f"deviation in the curved sections, which is what it is designed to do. It does so by moving "
-            f"the error forward: its tractor deviates by "
-            f"\\SI{{{fmt(M['tractor_curved'],3)}}}{{\\metre}} against "
-            f"\\SI{{{fmt(P['tractor_curved'],3)}}}{{\\metre}}. The consequence is visible in the two "
-            f"quantities that describe the whole vehicle: the worst segment is "
-            f"\\SI{{{fmt(M['worst_curved'],3)}}}{{\\metre}} against "
-            f"\\SI{{{fmt(P['worst_curved'],3)}}}{{\\metre}}, and the corridor required is "
-            f"\\SI{{{fmt(M['corridor'],2)}}}{{\\metre}} against "
-            f"\\SI{{{fmt(P['corridor'],2)}}}{{\\metre}}. Pure pursuit, which references the tractor "
-            f"alone, shows the opposite distribution: \\SI{{{fmt(U['tractor_curved'],3)}}}{{\\metre}} at the "
-            f"tractor and \\SI{{{fmt(last(U),3)}}}{{\\metre}} at the last trailer.")))
-        tex.append(macro("SEightFitTime", fmt(s8.get("_mp_fit_s", float("nan")), 1)))
-        tex.append(macro("SEightFitResid", fmt(s8.get("_mp_resid", float("nan")), 2)))
-        tex.append(macro("SEightOnlineMs", fmt(P["t_online_ms"], 1)))
-        tex.append(macro("SEightCorridorGain", fmt(
-            100.0 * (M["corridor"] - P["corridor"]) / M["corridor"], 0)))
-        tex.append(macro("SEightWorstGain", fmt(
-            100.0 * (M["worst_curved"] - P["worst_curved"]) / M["worst_curved"], 0)))
-    else:
-        for nme in ("SEightNarrative", "SEightFitTime", "SEightFitResid",
-                    "SEightOnlineMs", "SEightCorridorGain", "SEightWorstGain"):
-            tex.append(macro(nme, PENDING("S8") if nme.endswith("Narrative") else "--"))
-        notes.append("s8 missing")
+    try:
+        s8 = load("s8_comparison")
+        if s8:
+            P, M, U = s8["proposed"], s8.get("mp2021"), s8.get("pursuit")
+            def last(d):
+                return d["mean_curved"][-1]
+            tex.append(macro("SEightNarrative", (
+                f"On the agricultural path the reconstruction of \\cite{{michalek2021reconstruction}} places "
+                f"the last trailer better than the proposed formulation does---"
+                f"\\SI{{{fmt(last(M),3)}}}{{\\metre}} against \\SI{{{fmt(last(P),3)}}}{{\\metre}} mean "
+                f"deviation in the curved sections, which is what it is designed to do. Its tractor "
+                f"deviates by \\SI{{{fmt(M['tractor_curved'],3)}}}{{\\metre}} against "
+                f"\\SI{{{fmt(P['tractor_curved'],3)}}}{{\\metre}}. Of the two quantities that "
+                f"describe the whole vehicle, the worst segment is "
+                f"\\SI{{{fmt(M['worst_curved'],3)}}}{{\\metre}} against "
+                f"\\SI{{{fmt(P['worst_curved'],3)}}}{{\\metre}} and the corridor required "
+                f"\\SI{{{fmt(M['corridor'],2)}}}{{\\metre}} against "
+                f"\\SI{{{fmt(P['corridor'],2)}}}{{\\metre}}. Pure pursuit, which references the tractor "
+                f"alone, gives \\SI{{{fmt(U['tractor_curved'],3)}}}{{\\metre}} at the "
+                f"tractor and \\SI{{{fmt(last(U),3)}}}{{\\metre}} at the last trailer."
+                + diverged_note(sum(d.get("n_diverged", 0) for d in (P, M, U) if d), 9)
+                + fails_note(sum(d.get("fails", 0) for d in (P, M, U) if d)))))
+            tex.append(macro("SEightFitTime", fmt(s8.get("_mp_fit_s", float("nan")), 1)))
+            tex.append(macro("SEightFitResid", fmt(s8.get("_mp_resid", float("nan")), 2)))
+            tex.append(macro("SEightOnlineMs", fmt(P["t_online_ms"], 1)))
+            tex.append(macro("SEightCorridorGain", fmt(
+                100.0 * (M["corridor"] - P["corridor"]) / M["corridor"], 0)))
+            tex.append(macro("SEightWorstGain", fmt(
+                100.0 * (M["worst_curved"] - P["worst_curved"]) / M["worst_curved"], 0)))
+        else:
+            for nme in ("SEightNarrative", "SEightFitTime", "SEightFitResid",
+                        "SEightOnlineMs", "SEightCorridorGain", "SEightWorstGain"):
+                tex.append(macro(nme, PENDING("S8") if nme.endswith("Narrative") else "--"))
+            notes.append("s8 missing")
+    except (KeyError, TypeError, ValueError, IndexError) as exc:
+        tex.append(macro("SEightNarrative", "\\textbf{[S8: the data contain runs that did not complete; see out/ -- " + type(exc).__name__ + "]}"))
+        notes.append("S8 could not be summarised automatically: " + repr(exc))
 
     # ------------------------------------------------------------------- S9
-    s9 = load("s9_reachability")
-    if s9:
-        P, A = s9["pos_m"], s9["ang_deg"]
-        step = s9.get("sigma_Ts_m", 0.05)
-        tex.append(macro("SNineNarrative", (
-            f"On the straight sections the position part has mean "
-            f"\\SI{{{fmt(1000*P['straight']['mean'],1)}}}{{\\milli\\metre}} and maximum "
-            f"\\SI{{{fmt(1000*P['straight']['max'],1)}}}{{\\milli\\metre}}, and the angle part "
-            f"is at most \\SI{{{fmt(A['straight']['max'],2)}}}{{\\degree}}; in the headland turns "
-            f"the corresponding values are \\SI{{{fmt(1000*P['curved']['mean'],1)}}}{{\\milli\\metre}}, "
-            f"\\SI{{{fmt(1000*P['curved']['max'],1)}}}{{\\milli\\metre}} and "
-            f"\\SI{{{fmt(A['curved']['max'],2)}}}{{\\degree}}. Against the "
-            f"\\SI{{{fmt(1000*step,0)}}}{{\\milli\\metre}} by which the reference progresses "
-            f"in one sampling period, successive references are reachable to within "
-            f"{fmt(100*P['curved']['max']/step,0)}\\,\\% of a step in the worst case and "
-            f"{fmt(100*P['straight']['mean']/step,0)}\\,\\% on average along the straight "
-            f"sections.")))
-    else:
-        tex.append(macro("SNineNarrative", PENDING("S9")))
-        notes.append("s9 missing")
+    try:
+        s9 = load("s9_reachability")
+        if s9:
+            P, A = s9["pos_m"], s9["ang_deg"]
+            step = s9.get("sigma_Ts_m", 0.05)
+            tex.append(macro("SNineNarrative", (
+                f"On the straight sections the position part has mean "
+                f"\\SI{{{fmt(1000*P['straight']['mean'],1)}}}{{\\milli\\metre}} and maximum "
+                f"\\SI{{{fmt(1000*P['straight']['max'],1)}}}{{\\milli\\metre}}, and the angle part "
+                f"is at most \\SI{{{fmt(A['straight']['max'],2)}}}{{\\degree}}; in the headland turns "
+                f"the corresponding values are \\SI{{{fmt(1000*P['curved']['mean'],1)}}}{{\\milli\\metre}}, "
+                f"\\SI{{{fmt(1000*P['curved']['max'],1)}}}{{\\milli\\metre}} and "
+                f"\\SI{{{fmt(A['curved']['max'],2)}}}{{\\degree}}. Against the "
+                f"\\SI{{{fmt(1000*step,0)}}}{{\\milli\\metre}} by which the reference progresses "
+                f"in one sampling period, successive references are reachable to within "
+                f"{fmt(100*P['curved']['max']/step,0)}\\,\\% of a step in the worst case and "
+                f"{fmt(100*P['straight']['mean']/step,1)}\\,\\% on average along the straight "
+                f"sections."
+                + fails_note(int(s9.get("fails", 0)))
+                + diverged_note(int(s9.get("n_diverged", 0)), int(s9.get("n_runs", 3))))))
+        else:
+            tex.append(macro("SNineNarrative", PENDING("S9")))
+            notes.append("s9 missing")
+    except (KeyError, TypeError, ValueError, IndexError) as exc:
+        tex.append(macro("SNineNarrative", "\\textbf{[S9: the data contain runs that did not complete; see out/ -- " + type(exc).__name__ + "]}"))
+        notes.append("S9 could not be summarised automatically: " + repr(exc))
 
     # ------------------------------------------------------------------- S7
-    s7 = load("s7_varying_n")
-    if s7:
-        settle = s7.get("settle_s", float("nan"))
-        if np.isfinite(settle) and settle <= 0.0:
-            settle_txt = "never exceeds its pre-event level"
-        elif np.isfinite(settle):
-            settle_txt = (f"returns to its pre-event level within "
-                          f"\\SI{{{fmt(settle,1)}}}{{\\second}}")
+    try:
+        s7 = load("s7_varying_n")
+        if s7:
+            if "peak_ref_same_corner" not in s7:
+                raise KeyError("s7 predates the comparison run; re-run studies/s7_varying_n.py")
+            tex.append(macro("SSevenNarrative", (
+                f"Rebuilding the three optimisation problems for the new $N$ takes "
+                + (f"\\SI{{{fmt(1000*s7['rebuild_s'],0)}}}{{\\milli\\second}}"
+                   if s7["rebuild_s"] < 1.0 else
+                   f"\\SI{{{fmt(s7['rebuild_s'],1)}}}{{\\second}}")
+                + f", an offline cost, since the structure depends only on $N$ and can be "
+                f"prepared in advance for each configuration the vehicle may adopt. The detached "
+                f"vehicle is compared with a two-trailer vehicle driven along the whole path, at "
+                f"the same positions on it. After the detachment the worst segment peaks at "
+                f"\\SI{{{fmt(s7['peak_after'],3)}}}{{\\metre}}, against "
+                f"\\SI{{{fmt(s7['peak_ref_same_corner'],3)}}}{{\\metre}} for that vehicle at the "
+                f"same place on the path, and over the rest of the evaluated run the worst segment's mean "
+                f"deviation is \\SI{{{fmt(s7['worst_mean_after'],3)}}}{{\\metre}}, against "
+                f"\\SI{{{fmt(s7['worst_mean_ref_same'],3)}}}{{\\metre}}. No model is re-derived "
+                f"and no tuning is repeated: the model, the generator, the controller and the "
+                f"estimator are written for an arbitrary number of trailers. Detaching a trailer on "
+                f"the physical platform is left to future work."
+                + fails_note(int(s7.get("fails_before", 0) + s7.get("fails_after", 0)
+                                 + s7.get("fails_ref", 0))))))
         else:
-            settle_txt = "does not return to its pre-event level within the run"
-        tex.append(macro("SSevenNarrative", (
-            f"Rebuilding the three optimisation problems for the new $N$ takes "
-            + (f"\\SI{{{fmt(1000*s7['rebuild_s'],0)}}}{{\\milli\\second}}"
-               if s7["rebuild_s"] < 1.0 else
-               f"\\SI{{{fmt(s7['rebuild_s'],1)}}}{{\\second}}")
-            + f"---an offline cost, since the structure "
-            f"depends only on $N$ and can be prepared in advance for each configuration the "
-            f"vehicle may adopt. After the detachment the worst segment peaks at "
-            f"\\SI{{{fmt(s7['peak_after'],3)}}}{{\\metre}}, {settle_txt}, and settles at "
-            f"\\SI{{{fmt(s7['worst_after'],3)}}}{{\\metre}} against "
-            f"\\SI{{{fmt(s7['worst_before'],3)}}}{{\\metre}} beforehand. "
-            f"The formulation therefore "
-            f"accommodates a change in the number of trailers: no model is re-derived and no "
-            f"tuning is repeated, because the generator's constraints are written for an arbitrary "
-            f"chain length. It remains a simulation result, and detaching a trailer on the "
-            f"physical platform is left to future work.")))
-    else:
-        tex.append(macro("SSevenNarrative", PENDING("S7")))
-        notes.append("s7 missing")
+            tex.append(macro("SSevenNarrative", PENDING("S7")))
+            notes.append("s7 missing")
+    except (KeyError, TypeError, ValueError, IndexError) as exc:
+        tex.append(macro("SSevenNarrative", "\\textbf{[S7: the data contain runs that did not complete; see out/ -- " + type(exc).__name__ + "]}"))
+        notes.append("S7 could not be summarised automatically: " + repr(exc))
 
     # ---------------------------------------------------- verification macros
     ver = load("verification")
@@ -556,57 +623,72 @@ def main():
         rep = fr.get("repeat")
         pts = E3["points"]
         lo, hi = pts[0], pts[-1]
+        # Every number below is read from field_report.json; the sentences state
+        # what the data show and nothing about why.
+        sel_pct = max(100.0 * abs(E["worst"] - E["worst_session"]) / E["worst_session"]
+                      for E in (E1, E2))
+        r2 = lambda v: round(v, 2)
+        rep_txt = ""
+        if rep:
+            d_tr = max(abs(r2(rep["mean_dev"][i]) - r2(E2["mean_dev"][i])) for i in (1, 2))
+            d_t0 = abs(r2(rep["mean_dev"][0]) - r2(E2["mean_dev"][0]))
+            rep_txt = (
+                f" A further session shares the configuration of Experiment 2, on the same path "
+                f"and vehicle, and its {rep['n']} trials at that configuration are an independent "
+                f"repetition on an earlier day. Between the two days the mean deviations of the trailers differ by "
+                f"at most \\SI{{{fmt(d_tr,2)}}}{{\\metre}} "
+                f"(\\SI{{{fmt(rep['mean_dev'][1],2)}}}{{\\metre}} and "
+                f"\\SI{{{fmt(rep['mean_dev'][2],2)}}}{{\\metre}} against "
+                f"\\SI{{{fmt(E2['mean_dev'][1],2)}}}{{\\metre}} and "
+                f"\\SI{{{fmt(E2['mean_dev'][2],2)}}}{{\\metre}}), and that of the tractor by "
+                f"\\SI{{{fmt(d_t0,2)}}}{{\\metre}} "
+                f"(\\SI{{{fmt(rep['mean_dev'][0],2)}}}{{\\metre}} against "
+                f"\\SI{{{fmt(E2['mean_dev'][0],2)}}}{{\\metre}}).")
+        ws = ", ".join(fmt(p["w"], 0) for p in pts[:-1]) + f" and {fmt(pts[-1]['w'],0)}"
+        ns = ", ".join(str(p["n"]) for p in pts[:-1]) + f" and {pts[-1]['n']}"
+        last = ", ".join(fmt(p["mean_dev"][-1], 2) for p in pts[:-1]) + \
+            f" and \\SI{{{fmt(pts[-1]['mean_dev'][-1],2)}}}{{\\metre}}"
+        trac = ", ".join(fmt(p["mean_dev"][0], 2) for p in pts[:-1]) + \
+            f" and \\SI{{{fmt(pts[-1]['mean_dev'][0],2)}}}{{\\metre}}"
         tex.append(macro("FieldNarrative", (
-            f"The adopted configuration of each session is its modal one, which selects "
-            f"{E1['n']} of {E1['n_session']} trials on 14 November and {E2['n']} of "
-            f"{E2['n_session']} on 15 November, reported as Experiments 1 and 2. Both are given "
-            f"at the adopted configuration and over the whole session---"
-            f"\\SI{{{fmt(E1['worst'],2)}}}{{\\metre}} against "
-            f"\\SI{{{fmt(E1['worst_session'],2)}}}{{\\metre}} on the worst segment of "
-            f"Experiment 1, \\SI{{{fmt(E2['worst'],2)}}}{{\\metre}} against "
-            f"\\SI{{{fmt(E2['worst_session'],2)}}}{{\\metre}} for Experiment 2---so that the "
-            f"selection is seen to move the figures by a few per cent."
-            + (f" A further session shares the configuration of Experiment 2, on the same path "
-               f"and vehicle, and its {rep['n']} trials are an independent repetition on an "
-               f"earlier day. The trailers reproduce---"
-               f"\\SI{{{fmt(rep['mean_dev'][1],2)}}}{{\\metre}} and "
-               f"\\SI{{{fmt(rep['mean_dev'][2],2)}}}{{\\metre}} against "
-               f"\\SI{{{fmt(E2['mean_dev'][1],2)}}}{{\\metre}} and "
-               f"\\SI{{{fmt(E2['mean_dev'][2],2)}}}{{\\metre}}---while the tractor reaches "
-               f"\\SI{{{fmt(rep['mean_dev'][0],2)}}}{{\\metre}} against "
-               f"\\SI{{{fmt(E2['mean_dev'][0],2)}}}{{\\metre}}: the two days agree on the "
-               f"path of the chain and differ on the excursion of the tractor."
-               if rep else "")
-            + f"\n\n"
-            f"Every deviation is that of the estimated posture and is quoted to the centimetre, "
-            f"which is what the instrumentation supports. In Experiment 2, on a path whose "
-            f"corners are tighter than the chain can negotiate, the two trailers stay within "
+            f"The modal configuration selects {E1['n']} of {E1['n_session']} trials on "
+            f"14 November and {E2['n']} of {E2['n_session']} on 15 November. Over these trials "
+            f"and over the whole session, the worst segment deviates by "
+            f"\\SI{{{fmt(E1['worst'],2)}}}{{\\metre}} and "
+            f"\\SI{{{fmt(E1['worst_session'],2)}}}{{\\metre}} in Experiment 1 and by "
+            f"\\SI{{{fmt(E2['worst'],2)}}}{{\\metre}} and "
+            f"\\SI{{{fmt(E2['worst_session'],2)}}}{{\\metre}} in Experiment 2, so the "
+            f"selection changes the worst-segment figure by at most "
+            f"{int(np.ceil(sel_pct))}\\,\\%." + rep_txt + "\n\n"
+            f"In Experiment 2, on the rectangle, the mean deviations of the two trailers are "
             f"\\SI{{{fmt(E2['mean_dev'][1],2)}}}{{\\metre}} and "
-            f"\\SI{{{fmt(E2['mean_dev'][2],2)}}}{{\\metre}} of the path while the tractor "
-            f"deviates by \\SI{{{fmt(E2['mean_dev'][0],2)}}}{{\\metre}}, which places the "
-            f"error on the segment with room for it. On the smooth path of Experiment 1 all "
-            f"three segments lie between \\SI{{{fmt(min(E1['mean_dev']),2)}}}{{\\metre}} and "
-            f"\\SI{{{fmt(max(E1['mean_dev']),2)}}}{{\\metre}} of the path.\n\n"
-            f"The weighting sweep covers {E3['n']} rectangular-path trials at "
-            f"{fmt(lo['w'],0)}, {fmt(pts[1]['w'],0)} and {fmt(hi['w'],0)} times the weight of "
-            f"the tractor. The deviation of the last trailer ranges from "
-            f"\\SI{{{fmt(lo['mean_dev'][-1],2)}}}{{\\metre}} to "
-            f"\\SI{{{fmt(hi['mean_dev'][-1],2)}}}{{\\metre}} and that of the tractor from "
-            f"\\SI{{{fmt(lo['mean_dev'][0],2)}}}{{\\metre}} to "
-            f"\\SI{{{fmt(hi['mean_dev'][0],2)}}}{{\\metre}}, with the sample sizes marked in "
-            f"Fig.~\\ref{{fig:fieldsummary}}; the heaviest setting was run "
-            + ("only once" if hi['n'] == 1 else f"only {hi['n']} times")
-            + f", so the sweep is reported as an observation and not as a trend.\n\n"
-            f"The field controller ran at \\SI{{{fmt(E1['Ts_ms'],0)}}}{{\\milli\\second}} "
-            f"with horizons between 5 and 13, and a step took "
-            f"\\SI{{{fmt(E1['t_tot'],0)}}}{{\\milli\\second}} on average in Experiment 1 "
-            f"and \\SI{{{fmt(E2['t_tot'],0)}}}{{\\milli\\second}} in Experiment 2, with "
-            f"95th percentiles of \\SI{{{fmt(E1['t_p95'],0)}}}{{\\milli\\second}} and "
-            f"\\SI{{{fmt(E2['t_p95'],0)}}}{{\\milli\\second}}. Within that budget the "
-            f"reference generator cost \\SI{{{fmt(E1['t_pfa'],1)}}}{{\\milli\\second}}, "
-            f"about {fmt(100*E1['t_pfa']/E1['t_tot'],1)}\\,\\% of the step, the expense "
-            f"being the tracking problem and the estimator.")))
+            f"\\SI{{{fmt(E2['mean_dev'][2],2)}}}{{\\metre}}, against "
+            f"\\SI{{{fmt(E2['mean_dev'][0],2)}}}{{\\metre}} for the tractor. On the "
+            f"lemniscate of Experiment 1 the three mean deviations lie between "
+            f"\\SI{{{fmt(min(E1['mean_dev']),2)}}}{{\\metre}} and "
+            f"\\SI{{{fmt(max(E1['mean_dev']),2)}}}{{\\metre}}.\n\n"
+            f"The weighting sweep covers {E3['n']} trials on the rectangle, at {ws} times the "
+            f"weight of the tractor, with {ns} trials respectively. At these settings the mean "
+            f"deviation of the last trailer is {last} and that of the tractor {trac}; with "
+            + ("a single trial" if pts[-1]["n"] == 1 else f"only {pts[-1]['n']} trials")
+            + f" at the heaviest setting, the sweep is reported as an observation and not as a "
+            f"trend."
+            + "".join(f" The trials at {fmt(p['w'],0)} times the weight of the tractor pool "
+                      f"estimation windows of "
+                      + ", ".join(str(v) for v in p['Ne'][:-1]) + f" and {p['Ne'][-1]} steps."
+                      for p in pts if len(p.get("Ne", [])) > 1)
+            + "\n\n"
+            f"A step took \\SI{{{fmt(E1['t_tot'],0)}}}{{\\milli\\second}} on average in "
+            f"Experiment 1 and \\SI{{{fmt(E2['t_tot'],0)}}}{{\\milli\\second}} in Experiment 2, "
+            f"with 95th percentiles of \\SI{{{fmt(E1['t_p95'],0)}}}{{\\milli\\second}} and "
+            f"\\SI{{{fmt(E2['t_p95'],0)}}}{{\\milli\\second}}. Within it the reference "
+            f"generator took \\SI{{{fmt(E1['t_pfa'],1)}}}{{\\milli\\second}}, about "
+            f"{fmt(100*E1['t_pfa']/E1['t_tot'],1)}\\,\\% of the step, against "
+            f"\\SI{{{fmt(E1['t_mpc'],0)}}}{{\\milli\\second}} for the tracking problem and "
+            f"\\SI{{{fmt(E1['t_mhe'],0)}}}{{\\milli\\second}} for the estimator in "
+            f"Experiment 1.")))
         tex.append(macro("FieldTs", fmt(E1["Ts_ms"], 0)))
+        tex.append(macro("FieldLemnRadius", fmt(E1.get("path_min_radius", float("nan")), 2)))
         tex.append(macro("FieldRefMs", fmt(E1["t_pfa"], 1)))
         tex.append(macro("FieldRefPct", fmt(100 * E1["t_pfa"] / E1["t_tot"], 1)))
         tex.append(macro("FieldNTrials", str(fr["n_logs"])))
@@ -616,6 +698,18 @@ def main():
         tex.append(macro("FieldTPNinetyFive", fmt(max(E1["t_p95"], E2["t_p95"]), 0)))
         tex.append(macro("FieldStepLo", fmt(min(E1["t_tot"], E2["t_tot"]), 0)))
         tex.append(macro("FieldStepHi", fmt(max(E1["t_tot"], E2["t_tot"]), 0)))
+        tex.append(macro("FieldStepOne", fmt(E1["t_tot"], 0)))
+        tex.append(macro("FieldStepTwo", fmt(E2["t_tot"], 0)))
+        tex.append(macro("FieldPNinetyFiveOne", fmt(E1["t_p95"], 0)))
+        tex.append(macro("FieldPNinetyFiveTwo", fmt(E2["t_p95"], 0)))
+        tex.append(macro("FieldNBetaMeasOver", str(fr.get("n_beta_meas_over", "--"))))
+        tex.append(macro("FieldNBetaEstOver", str(fr.get("n_beta_est_over", "--"))))
+        tex.append(macro("FieldSweepOtherPath", str(E3.get("n_day_other_path", "--"))))
+        tex.append(macro("FieldSweepNDay", str(E3.get("n_day", "--"))))
+        nw = E3.get("n_day_other_path_weights")
+        words = {1: "one", 2: "two", 3: "three", 4: "four", 5: "five", 6: "six", 7: "seven",
+                 8: "eight", 9: "nine"}
+        tex.append(macro("FieldSweepOtherWeights", words.get(nw, str(nw))))
 
         lines = ["\\begin{tabularx}{\\columnwidth}{@{}Xccccc@{}}", "\\toprule",
                  "Experiment & Trials & Tractor & Trailer 1 & Last trailer & Step \\\\",
@@ -643,7 +737,9 @@ def main():
             fh.write("\n".join(lines) + "\n")
     else:
         tex.append(macro("FieldNarrative", PENDING("the field-log analysis")))
-        for nme in ("FieldTs", "FieldRefMs", "FieldRefPct", "FieldNTrials", "FieldBetaMax", "FieldTPNinetyFive", "FieldStepLo",
+        for nme in ("FieldStepOne", "FieldStepTwo", "FieldPNinetyFiveOne", "FieldPNinetyFiveTwo",
+                    "FieldNBetaMeasOver", "FieldNBetaEstOver", "FieldSweepOtherPath",
+                    "FieldSweepNDay", "FieldSweepOtherWeights", "FieldTs", "FieldLemnRadius", "FieldRefMs", "FieldRefPct", "FieldNTrials", "FieldBetaMax", "FieldTPNinetyFive", "FieldStepLo",
                     "FieldStepHi"):
             tex.append(macro(nme, "--"))
         notes.append("field report missing")

@@ -22,21 +22,21 @@ from __future__ import annotations
 import numpy as np
 import matplotlib.pyplot as plt
 
-from common import C_LAST, C_MID, dump, g2t, save
+from common import C_LAST, C_MID, dump, g2t, save, study_path, t_final_for
 from gntpf import RefGenWeights, SensorModel, SimConfig, make_path, simulate
 from parallel import pmap
 
 PATH = "agricultural"
-T_FINAL, SIGMA = 160.0, 1.0
+SIGMA = 1.0
 SEEDS = (0, 1, 2)
-SKIP = 0.15
 
 
 def _one(seed):
     m = g2t()
     sensors = SensorModel(sigma=np.concatenate(
         [np.deg2rad(1.0) * np.ones(m.N), [np.deg2rad(0.2)], [0.025, 0.025]]))
-    return simulate(m, make_path(PATH), SimConfig(sigma=SIGMA, t_final=T_FINAL, seed=seed),
+    path = study_path(PATH, m)
+    return simulate(m, path, SimConfig(sigma=SIGMA, t_final=t_final_for(path, SIGMA), seed=seed),
                     sensors=sensors, refgen_weights=RefGenWeights(w_path=20.0, w_theta=5.0))
 
 
@@ -57,13 +57,14 @@ def _combine(summaries):
 
 def figure(res):
     N = res.meta["N"]
-    k0 = int(SKIP * res.t.size)
-    t = res.t[k0:]
-    R = res.reach[:, k0:]
+    M, C = res.masks()
+    kk = M[0]
+    t = res.t[kk]
+    R = res.reach[:, kk]
     pos = np.stack([np.hypot(R[2 * N + 1 + 2 * i], R[2 * N + 2 + 2 * i])
                     for i in range(N + 1)]).max(axis=0)
     ang = np.degrees(np.abs(R[:2 * N + 1]).max(axis=0))
-    c = res.curved[k0:]
+    c = C.any(axis=0)[kk]
 
     fig, axes = plt.subplots(2, 1, figsize=(7.2, 3.2), sharex=True)
     fig.subplots_adjust(hspace=0.12)
@@ -82,10 +83,13 @@ def figure(res):
 
 
 if __name__ == "__main__":
-    print(f"[S9] reachability residual -- {PATH}, {len(SEEDS)} seeds, {T_FINAL:.0f} s", flush=True)
-    runs = pmap(_one, [(sd,) for sd in SEEDS])
-    out = _combine([r.reach_summary(skip=SKIP) for r in runs])
-    out["sigma_Ts_m"] = SIGMA * runs[0].meta.get("Ts", 0.05)
+    print(f"[S9] reachability residual -- {PATH}, {len(SEEDS)} seeds", flush=True)
+    runs_all = pmap(_one, [(sd,) for sd in SEEDS])
+    runs = [r for r in runs_all if r.summary()["completed"]]
+    out = _combine([r.reach_summary() for r in runs])
+    out["n_runs"], out["n_diverged"] = len(runs_all), len(runs_all) - len(runs)
+    out["fails"] = int(sum(sum(r.fails.values()) for r in runs_all))
+    out["sigma_Ts_m"] = SIGMA * runs_all[0].meta.get("Ts", 0.05)
     out["path"] = PATH
     for part, unit in (("pos_m", "m"), ("ang_deg", "deg")):
         for region in ("straight", "curved"):
@@ -93,4 +97,4 @@ if __name__ == "__main__":
             print(f"  {part:7s} {region:8s} mean {r['mean']:.4f}  p95 {r['p95']:.4f}  "
                   f"max {r['max']:.4f} {unit}", flush=True)
     dump(out, "s9_reachability")
-    figure(runs[0])
+    figure(runs_all[0])

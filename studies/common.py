@@ -13,7 +13,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from gntpf import GNT  # noqa: E402
+from gntpf import GNT, make_path  # noqa: E402
 
 OUT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "out")
 FIGS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "figs")
@@ -39,6 +39,33 @@ def vehicle(N: int, Ts: float = 0.05) -> GNT:
 
 def g2t(Ts: float = 0.05) -> GNT:
     return GNT(N=2, Lh=G2T["Lh"], L=G2T["L"], Ts=Ts)
+
+
+# --------------------------------------------------------------------------- #
+#  Paths as the studies use them
+# --------------------------------------------------------------------------- #
+# Closed paths are traversed this many times; open paths once.
+LAPS = 2
+
+
+def study_path(name: str, model: GNT, **kw):
+    """A path with a straight lead-in, the nominal span, and a run-out.
+
+    The lead-in absorbs the start-up transient before the span begins.  The
+    span is ``LAPS`` laps of a closed path or one traversal of an open one.
+    The run-out lets the last trailer finish the span before the progress point
+    reaches the end of the path, which is where a run stops.  Every segment is
+    evaluated only while its own projection lies inside the span.
+    """
+    from gntpf.paths import CLOSED_PATHS
+    ell = model.total_length
+    laps = LAPS if name in CLOSED_PATHS else 1
+    return make_path(name, laps=laps, lead=1.6 * ell + 6.0, runout=ell + 2.0, **kw)
+
+
+def t_final_for(path, sigma: float, margin: float = 20.0) -> float:
+    """A time cap that the progress point cannot reach before the path end."""
+    return path.length / sigma + margin
 
 
 # --------------------------------------------------------------------------- #
