@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+.venv/
+
+# LaTeX build products
+paper/*.aux
+paper/*.bbl
+paper/*.blg
+paper/*.log
+paper/*.out
+paper/*.synctex.gz
+
+# The field logs are part of the released data set, not of this repository.
+field_logs/
+
+# The manuscript source is not part of this repository; the studies write their
+# LaTeX macros, tables and figures into paper/ when it is present.
+paper/

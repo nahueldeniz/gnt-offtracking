@@ -1,0 +1,60 @@
+{
+  "n_files": 5,
+  "n_epochs": 4737,
+  "flags": {
+    "spp": 4737
+  },
+  "rtk_fraction": 0.0,
+  "spp_fraction": 1.0,
+  "h_acc_median_m": 1.225,
+  "h_acc_p10_m": 1.153,
+  "h_acc_p90_m": 1.411,
+  "n_sats_median": 15,
+  "per_file": [
+    {
+      "file": "exps_13_nov/rect16.sbp.json",
+      "epochs": 1210,
+      "flags": {
+        "spp": 1210
+      },
+      "h_acc_median_mm": 1386.0,
+      "n_sats_median": 15.0
+    },
+    {
+      "file": "exps_14_nov/flinfit10.sbp.json",
+      "epochs": 1602,
+      "flags": {
+        "spp": 1602
+      },
+      "h_acc_median_mm": 1174.0,
+      "n_sats_median": 15.0
+    },
+    {
+      "file": "exps_15_nov/rect14.sbp.json",
+      "epochs": 1089,
+      "flags": {
+        "spp": 1089
+      },
+      "h_acc_median_mm": 1250.0,
+      "n_sats_median": 15
+    },
+    {
+      "file": "exps_20_nov/rect11.sbp.json",
+      "epochs": 222,
+      "flags": {
+        "spp": 222
+      },
+      "h_acc_median_mm": 1198.0,
+      "n_sats_median": 15.0
+    },
+    {
+      "file": "exps_20_nov/rect12.sbp.json",
+      "epochs": 614,
+      "flags": {
+        "spp": 614
+      },
+      "h_acc_median_mm": 1293.0,
+      "n_sats_median": 15.0
+    }
+  ]
+}

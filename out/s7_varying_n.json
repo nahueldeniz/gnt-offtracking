@@ -1,0 +1,9 @@
+{
+  "rebuild_s": 0.034125828999094665,
+  "worst_before": 0.11407654270842736,
+  "worst_after": 0.04398385530519847,
+  "peak_after": 0.04608119936856761,
+  "settle_s": 0.0,
+  "fails_before": 0,
+  "fails_after": 0
+}

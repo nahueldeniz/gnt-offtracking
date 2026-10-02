@@ -1,0 +1,26 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite the paper below."
+title: "Reachable reference generation and predictive path following for Generalised N-Trailer vehicles"
+abstract: >-
+  Reference implementation of a two-stage optimisation framework that generates
+  a kinematically feasible reference posture for every segment of a Generalised
+  N-Trailer vehicle and tracks it with a predictive controller.
+authors:
+  - family-names: Deniz
+    given-names: Nestor Nahuel
+  - family-names: Auat Cheein
+    given-names: Fernando
+license: MIT
+repository-code: "https://github.com/<owner>/<repository>"
+preferred-citation:
+  type: article
+  title: >-
+    Reachable Reference Generation and Predictive Path Following for Off-tracking
+    Minimisation of Generalised N-Trailer Vehicles
+  authors:
+    - family-names: Deniz
+      given-names: Nestor Nahuel
+    - family-names: Auat Cheein
+      given-names: Fernando
+  journal: "IEEE Transactions on Control Systems Technology"
+  year: 2026
