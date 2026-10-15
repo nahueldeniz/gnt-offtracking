@@ -223,5 +223,16 @@
         ]
       }
     ]
+  },
+  "reported": {
+    "n": 60,
+    "n_beta_meas_over": 56,
+    "n_beta_est_over": 44,
+    "w_min": 2.0,
+    "w_max": 8.0,
+    "Nc_min": 5,
+    "Nc_max": 10,
+    "Ne_min": 3,
+    "Ne_max": 8
   }
 }

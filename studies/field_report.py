@@ -124,10 +124,12 @@ def main():
               "n_beta_est_over": int(sum(r.get("beta_est_max_deg", 0.0) > BETA_LIMIT_DEG
                                          for r in rows))}
 
+    reported = []                     # every trial that enters a reported experiment
     for spec in EXPERIMENTS:
         allday = select(rows, spec["day"], spec["path"], spec["L"])
         Nc, Ne, w = modal_config(allday)
         sel = select(rows, spec["day"], spec["path"], spec["L"], Nc=Nc, Ne=Ne, w=w)
+        reported += sel
         s = stats(sel)
         s_all = stats(allday)
         report[spec["key"]] = {**spec, "Nc": Nc, "Ne": Ne, "w": w, **s,
@@ -148,6 +150,7 @@ def main():
            and tuple(np.round(r["L"], 3)) == tuple(np.round(E2["L"], 3))
            and config(r) == (E2["Nc"], E2["Ne"], round(E2["w"], 2))]
     day_all = [r for r in rows if r["day"] == OTHER_DAY]
+    reported += rep
     if rep:
         pooled = rep + select(rows, E2["day"], E2["path"], E2["L"],
                               Nc=E2["Nc"], Ne=E2["Ne"], w=E2["w"])
@@ -180,6 +183,20 @@ def main():
           f"{sorted(by_w)} on the second vehicle")
     for p in report["E3"]["points"]:
         print(f"     w={p['w']:5.2f} n={p['n']:2d}  per-seg {np.round(p['mean_dev'],3)}")
+
+    # The trials of the reported experiments: Experiments 1 and 2, the repetition
+    # of Experiment 2 and the weighting sweep.
+    reported += sw
+    report["reported"] = dict(
+        n=len(reported),
+        n_beta_meas_over=int(sum(r["beta_max_deg"] > BETA_LIMIT_DEG for r in reported)),
+        n_beta_est_over=int(sum(r.get("beta_est_max_deg", 0.0) > BETA_LIMIT_DEG
+                                for r in reported)),
+        w_min=float(min(r["w_last_ratio"] for r in reported)),
+        w_max=float(max(r["w_last_ratio"] for r in reported)),
+        Nc_min=int(min(r["Nc"] for r in reported)), Nc_max=int(max(r["Nc"] for r in reported)),
+        Ne_min=int(min(r["Ne"] for r in reported)), Ne_max=int(max(r["Ne"] for r in reported)))
+    print(f"reported experiments: {report['reported']}")
 
     dump(report, "field_report")
     return report

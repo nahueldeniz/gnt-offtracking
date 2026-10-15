@@ -625,17 +625,14 @@ def main():
         lo, hi = pts[0], pts[-1]
         # Every number below is read from field_report.json; the sentences state
         # what the data show and nothing about why.
-        sel_pct = max(100.0 * abs(E["worst"] - E["worst_session"]) / E["worst_session"]
-                      for E in (E1, E2))
         r2 = lambda v: round(v, 2)
         rep_txt = ""
         if rep:
             d_tr = max(abs(r2(rep["mean_dev"][i]) - r2(E2["mean_dev"][i])) for i in (1, 2))
             d_t0 = abs(r2(rep["mean_dev"][0]) - r2(E2["mean_dev"][0]))
             rep_txt = (
-                f" A further session shares the configuration of Experiment 2, on the same path "
-                f"and vehicle, and its {rep['n']} trials at that configuration are an independent "
-                f"repetition on an earlier day. Between the two days the mean deviations of the trailers differ by "
+                f" The repetition of Experiment 2 on an earlier day comprises {rep['n']} trials; "
+                f"between the two days the mean deviations of the trailers differ by "
                 f"at most \\SI{{{fmt(d_tr,2)}}}{{\\metre}} "
                 f"(\\SI{{{fmt(rep['mean_dev'][1],2)}}}{{\\metre}} and "
                 f"\\SI{{{fmt(rep['mean_dev'][2],2)}}}{{\\metre}} against "
@@ -651,22 +648,13 @@ def main():
         trac = ", ".join(fmt(p["mean_dev"][0], 2) for p in pts[:-1]) + \
             f" and \\SI{{{fmt(pts[-1]['mean_dev'][0],2)}}}{{\\metre}}"
         tex.append(macro("FieldNarrative", (
-            f"The modal configuration selects {E1['n']} of {E1['n_session']} trials on "
-            f"14 November and {E2['n']} of {E2['n_session']} on 15 November. Over these trials "
-            f"and over the whole session, the worst segment deviates by "
-            f"\\SI{{{fmt(E1['worst'],2)}}}{{\\metre}} and "
-            f"\\SI{{{fmt(E1['worst_session'],2)}}}{{\\metre}} in Experiment 1 and by "
-            f"\\SI{{{fmt(E2['worst'],2)}}}{{\\metre}} and "
-            f"\\SI{{{fmt(E2['worst_session'],2)}}}{{\\metre}} in Experiment 2, so the "
-            f"selection changes the worst-segment figure by at most "
-            f"{int(np.ceil(sel_pct))}\\,\\%." + rep_txt + "\n\n"
             f"In Experiment 2, on the rectangle, the mean deviations of the two trailers are "
             f"\\SI{{{fmt(E2['mean_dev'][1],2)}}}{{\\metre}} and "
             f"\\SI{{{fmt(E2['mean_dev'][2],2)}}}{{\\metre}}, against "
             f"\\SI{{{fmt(E2['mean_dev'][0],2)}}}{{\\metre}} for the tractor. On the "
             f"lemniscate of Experiment 1 the three mean deviations lie between "
             f"\\SI{{{fmt(min(E1['mean_dev']),2)}}}{{\\metre}} and "
-            f"\\SI{{{fmt(max(E1['mean_dev']),2)}}}{{\\metre}}.\n\n"
+            f"\\SI{{{fmt(max(E1['mean_dev']),2)}}}{{\\metre}}." + rep_txt + "\n\n"
             f"The weighting sweep covers {E3['n']} trials on the rectangle, at {ws} times the "
             f"weight of the tractor, with {ns} trials respectively. At these settings the mean "
             f"deviation of the last trailer is {last} and that of the tractor {trac}; with "
@@ -688,6 +676,19 @@ def main():
             f"\\SI{{{fmt(E1['t_mhe'],0)}}}{{\\milli\\second}} for the estimator in "
             f"Experiment 1.")))
         tex.append(macro("FieldTs", fmt(E1["Ts_ms"], 0)))
+        R = fr.get("reported", {})
+        words = {1: "one", 2: "two", 3: "three", 4: "four", 5: "five", 6: "six", 7: "seven",
+                 8: "eight", 9: "nine", 10: "ten", 11: "eleven", 12: "twelve", 13: "thirteen"}
+        word = lambda v: words.get(int(round(v)), fmt(v, 0)) if v == v else "--"
+        tex.append(macro("FieldNExp", str(R.get("n", "--"))))
+        tex.append(macro("FieldNBetaMeasOverExp", str(R.get("n_beta_meas_over", "--"))))
+        tex.append(macro("FieldNBetaEstOverExp", str(R.get("n_beta_est_over", "--"))))
+        tex.append(macro("FieldWMin", word(R.get("w_min", float("nan")))))
+        tex.append(macro("FieldWMax", word(R.get("w_max", float("nan")))))
+        tex.append(macro("FieldNcMin", str(R.get("Nc_min", "--"))))
+        tex.append(macro("FieldNcMax", str(R.get("Nc_max", "--"))))
+        tex.append(macro("FieldNeMin", str(R.get("Ne_min", "--"))))
+        tex.append(macro("FieldNeMax", str(R.get("Ne_max", "--"))))
         tex.append(macro("FieldLemnRadius", fmt(E1.get("path_min_radius", float("nan")), 2)))
         tex.append(macro("FieldRefMs", fmt(E1["t_pfa"], 1)))
         tex.append(macro("FieldRefPct", fmt(100 * E1["t_pfa"] / E1["t_tot"], 1)))
@@ -737,7 +738,9 @@ def main():
             fh.write("\n".join(lines) + "\n")
     else:
         tex.append(macro("FieldNarrative", PENDING("the field-log analysis")))
-        for nme in ("FieldStepOne", "FieldStepTwo", "FieldPNinetyFiveOne", "FieldPNinetyFiveTwo",
+        for nme in ("FieldNExp", "FieldNBetaMeasOverExp", "FieldNBetaEstOverExp", "FieldWMin",
+                    "FieldWMax", "FieldNcMin", "FieldNcMax", "FieldNeMin", "FieldNeMax",
+                    "FieldStepOne", "FieldStepTwo", "FieldPNinetyFiveOne", "FieldPNinetyFiveTwo",
                     "FieldNBetaMeasOver", "FieldNBetaEstOver", "FieldSweepOtherPath",
                     "FieldSweepNDay", "FieldSweepOtherWeights", "FieldTs", "FieldLemnRadius", "FieldRefMs", "FieldRefPct", "FieldNTrials", "FieldBetaMax", "FieldTPNinetyFive", "FieldStepLo",
                     "FieldStepHi"):
