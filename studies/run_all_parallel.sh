@@ -42,6 +42,7 @@ for s in field_analysis field_report field_figures duro_quality; do
 done
 
 python3 make_diagrams.py
+python3 graphical_abstract.py
 python3 make_results_tex.py
 python3 make_tables.py
 python3 sync_figs.py

@@ -17,6 +17,7 @@ for s in field_analysis field_report field_figures duro_quality; do
   python3 ${s}.py 2>/dev/null || echo "--- $s skipped (field logs not present)"
 done
 python3 make_diagrams.py
+python3 graphical_abstract.py
 python3 make_results_tex.py
 python3 make_tables.py
 python3 sync_figs.py

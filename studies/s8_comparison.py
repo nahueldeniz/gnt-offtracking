@@ -42,7 +42,8 @@ import time
 import numpy as np
 import matplotlib.pyplot as plt
 
-from common import (C_GREY, C_LAST, C_MID, C_PATH, C_TRACTOR, OUT, dump, g2t, save, study_path, t_final_for,  # noqa: E402
+from common import (C_GREY, C_LAST, C_MID, C_PATH, C_TRACTOR, OUT, TEXT_W, _writable, dump, g2t,  # noqa: E402
+                    paper_style, save, study_path, t_final_for,
                     seg_colours, seg_label)
 
 from gntpf import (RefGenWeights, SensorModel, SimConfig, TrackingNMPC,  # noqa: E402
@@ -58,6 +59,7 @@ NICE = {"pursuit": "Pure pursuit (tractor)",
         "mp2021": "Micha\u0142ek & Pazderski (2021)",
         "proposed": "Proposed (all segments)"}
 SHORT = {"pursuit": "Pure pursuit", "mp2021": "Micha\u0142ek & Pazderski", "proposed": "Proposed"}
+SHORT2 = {"pursuit": "Pure\npursuit", "mp2021": "Micha\u0142ek &\nPazderski", "proposed": "Proposed"}
 COL = {"pursuit": "#7C8B99", "mp2021": "#4E7CB0", "proposed": "#A8372B"}
 
 # n_harm is set per path: the Fourier basis has to resolve the curvature
@@ -88,7 +90,7 @@ def mp_reference(model, path, n_harm=32, n_coll=600):
     return s, Q, time.perf_counter() - t0, g.resid_rms
 
 
-def run_case(path_name, n_harm=32):
+def run_case(path_name, n_harm=32, seeds=SEEDS):
     model = g2t()
     path = study_path(path_name, model)
     t_final = t_final_for(path, SIGMA)
@@ -98,7 +100,7 @@ def run_case(path_name, n_harm=32):
     out, traces = {}, {}
     for meth in METHODS:
         acc = []
-        for sd in SEEDS:
+        for sd in seeds:
             m = g2t()
             cfg = SimConfig(sigma=SIGMA, t_final=t_final, seed=sd)
             if meth == "proposed":
@@ -111,7 +113,7 @@ def run_case(path_name, n_harm=32):
                 r = simulate_baseline(m, path, PurePursuit(m, speed=SIGMA), cfg,
                                       sensors=sensors_for(m))
             acc.append(r)
-            if sd == SEEDS[0]:
+            if sd == seeds[0]:
                 traces[meth] = (r, m)
         S_all = [a.summary() for a in acc]
         S = [x for x in S_all if x["completed"]]
@@ -229,47 +231,70 @@ def figure_guidance(rows, proposed_worst, tag=""):
     save(fig, f"s8_guidance{tag}")
 
 
-def figure(path, out, traces, tag):
-    r0, model = traces["proposed"]
-    N = model.N
+def trace_arrays(traces):
+    """Segment positions of the first realisation of each method, (N+1, 2, K)."""
+    T = {}
+    for meth, (r, m) in traces.items():
+        N = m.N
+        T[meth] = np.stack([r.q[2 * N + 1 + 2 * i:2 * N + 3 + 2 * i, :] for i in range(N + 1)])
+    return T
+
+
+def save_traces(T, tag=""):
+    fn = _writable(os.path.join(OUT, f"s8_comparison{tag}_traces.npz"))
+    np.savez_compressed(fn, **T)
+    print(f"    traces -> out/s8_comparison{tag}_traces.npz", flush=True)
+
+
+def load_traces(tag=""):
+    z = np.load(os.path.join(OUT, f"s8_comparison{tag}_traces.npz"))
+    return {k: z[k] for k in z.files}
+
+
+def figure(path, out, T, tag=""):
+    """Full text width, drawn at its printed size."""
+    N = T["proposed"].shape[0] - 1
     cols = seg_colours(N)
-    fig = plt.figure(figsize=(7.2, 5.2))
-    gs = fig.add_gridspec(2, 3, height_ratios=[1.25, 1.0], hspace=0.42, wspace=0.36)
+    with paper_style():
+        fig = plt.figure(figsize=(TEXT_W, 3.25), layout="constrained")
+        gs = fig.add_gridspec(2, 3, height_ratios=[1.0, 1.05])
+        for j, meth in enumerate(METHODS):
+            ax = fig.add_subplot(gs[0, j])
+            P = T[meth]
+            ax.plot(path.xy[0], path.xy[1], "--", color=C_PATH, lw=0.7, label="Nominal path")
+            for i in range(N + 1):
+                ax.plot(P[i, 0], P[i, 1], color=cols[i], lw=0.8, label=seg_label(i, N))
+            ax.set_aspect("equal")
+            ax.set_title(NICE[meth])
+            ax.set_xlabel("x (m)")
+            if j == 0:
+                ax.set_ylabel("y (m)")
+            if j == 0:
+                handles, labels = ax.get_legend_handles_labels()
 
-    for j, meth in enumerate(METHODS):
-        ax = fig.add_subplot(gs[0, j])
-        r, m = traces[meth]
-        ax.plot(path.xy[0], path.xy[1], "--", color=C_PATH, lw=0.7, label="Nominal path")
-        for i in range(N + 1):
-            P = r.q[2 * N + 1 + 2 * i:2 * N + 3 + 2 * i, :]
-            ax.plot(P[0], P[1], color=cols[i], lw=0.9, label=seg_label(i, N))
-        ax.set_aspect("equal")
-        ax.set_title(NICE[meth], fontsize=8)
-        ax.set_xlabel("x (m)")
-        if j == 0:
-            ax.set_ylabel("y (m)")
-        if j == len(METHODS) - 1:
-            ax.legend(loc="center left", bbox_to_anchor=(1.02, 0.5), fontsize=6.2)
+        ax = fig.add_subplot(gs[1, :2])
+        w = 0.26
+        for j, meth in enumerate(METHODS):
+            ax.bar(np.arange(N + 1) + (j - 1) * w, out[meth]["mean_curved"], width=w,
+                   yerr=out[meth]["mean_curved_sd"], capsize=2, error_kw=dict(lw=0.6),
+                   color=COL[meth], label=SHORT[meth])
+        ax.set_xticks(np.arange(N + 1))
+        ax.set_xticklabels([seg_label(i, N) for i in range(N + 1)])
+        ax.set_ylabel("mean off-tracking in\ncurved sections (m)")
+        ymax = max(max(out[m]["mean_curved"]) for m in METHODS)
+        ax.set_ylim(0, 1.32 * ymax)
+        ax.legend(loc="upper center", ncol=len(METHODS), frameon=False, handlelength=1.2,
+                  columnspacing=1.2)
 
-    ax = fig.add_subplot(gs[1, :2])
-    w = 0.26
-    for j, meth in enumerate(METHODS):
-        ax.bar(np.arange(N + 1) + (j - 1) * w, out[meth]["mean_curved"], width=w,
-               yerr=out[meth]["mean_curved_sd"], capsize=2, error_kw=dict(lw=0.6),
-               color=COL[meth], label=NICE[meth])
-    ax.set_xticks(np.arange(N + 1))
-    ax.set_xticklabels([seg_label(i, N) for i in range(N + 1)])
-    ax.set_ylabel("mean off-tracking\nin curved sections (m)")
-    ax.legend(fontsize=7)
-
-    ax = fig.add_subplot(gs[1, 2])
-    x = np.arange(len(METHODS))
-    ax.bar(x, [out[m]["corridor"] for m in METHODS], color=[COL[m] for m in METHODS], width=0.62)
-    ax.set_xticks(x)
-    ax.set_xticklabels([SHORT[m] for m in METHODS],
-                       rotation=25, ha="right", fontsize=7)
-    ax.set_ylabel("corridor width\nrequired (m)")
-    save(fig, f"s8_comparison{tag}")
+        ax = fig.add_subplot(gs[1, 2])
+        x = np.arange(len(METHODS))
+        ax.bar(x, [out[m]["corridor"] for m in METHODS], color=[COL[m] for m in METHODS],
+               width=0.62)
+        ax.set_xticks(x)
+        ax.set_xticklabels([SHORT2[m] for m in METHODS])
+        ax.set_ylabel("corridor width (m)")
+        fig.legend(handles, labels, loc="outside upper center", ncol=len(labels), frameon=False)
+        save(fig, f"s8_comparison{tag}")
 
 
 if __name__ == "__main__":
@@ -283,12 +308,28 @@ if __name__ == "__main__":
         figure_guidance(grows, pw)
         dump({"sweep": grows, "proposed_worst": pw, "w_guide": W_GUIDE}, "s8_guidance")
         sys.exit(0)
+    if "--replot" in sys.argv or "--traces-only" in sys.argv:
+        # The figure plots the first realisation of each method and the averages in
+        # out/.  --traces-only recomputes that realisation alone, without touching
+        # the averages; --replot redraws from what out/ already holds.
+        pname, nh = CASES[0]
+        with open(os.path.join(OUT, "s8_comparison.json")) as fh:
+            out = json.load(fh)
+        if "--traces-only" in sys.argv:
+            print(f"[S8] first realisation of each method -- {pname}", flush=True)
+            path, _, traces = run_case(pname, n_harm=nh, seeds=SEEDS[:1])
+            save_traces(trace_arrays(traces))
+        path = study_path(pname, g2t())
+        figure(path, out, load_traces())
+        sys.exit(0)
     for pname, nh in CASES:
         tag = "" if pname == "agricultural" else f"_{pname}"
         print(f"[S8] comparison -- {pname} (n_harm={nh})", flush=True)
         path, out, traces = run_case(pname, n_harm=nh)
         dump(out, f"s8_comparison{tag}")
-        figure(path, out, traces, tag)
+        T = trace_arrays(traces)
+        save_traces(T, tag)
+        figure(path, out, T, tag)
         if pname == "agricultural":
             print("[S8] guidance-point objective, swept along the chain", flush=True)
             grows = run_guidance_sweep(path, t_final_for(path, SIGMA))

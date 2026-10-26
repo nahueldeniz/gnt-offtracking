@@ -30,8 +30,8 @@ import sys
 import numpy as np
 import matplotlib.pyplot as plt
 
-from common import (C_GREY, C_LAST, C_MID, C_TRACTOR, OUT, dump, g2t, save, seg_colours, seg_label,
-                    study_path, t_final_for)
+from common import (C_GREY, C_LAST, C_MID, C_TRACTOR, COL_W, OUT, dump, g2t, paper_style, save,
+                    seg_colours, seg_label, study_path, t_final_for)
 
 from gntpf import RefGenWeights, SensorModel, SimConfig, make_path, simulate
 from parallel import pmap
@@ -154,65 +154,67 @@ def run_reference_points(path, seeds=SEEDS):
 
 
 def figure(rows, refs):
+    """One column wide, drawn at its printed size."""
     N = 2
     cols = seg_colours(N)
     kap = np.array([r["kappa"] for r in rows])
-    fig = plt.figure(figsize=(7.2, 2.7))
-    gs = fig.add_gridspec(1, 3, wspace=0.42)
+    with paper_style():
+        fig = plt.figure(figsize=(COL_W, 3.45), layout="constrained")
+        gs = fig.add_gridspec(2, 2, height_ratios=[1.0, 1.25])
 
-    # --- the headline: corridor width follows the knob
-    ax = fig.add_subplot(gs[0, 0])
-    ax.errorbar(kap, [r["corridor"] for r in rows], yerr=[r["corridor_sd"] for r in rows],
-                fmt="o-", ms=3.4, color=C_LAST, lw=1.3, capsize=2.5, elinewidth=0.7)
-    ax.set_xlabel(r"weight tilt $\kappa$")
-    ax.set_ylabel("corridor width\nrequired (m)")
-    ax.set_title("corridor width", fontsize=8, loc="left")
+        # --- the headline: corridor width follows the knob
+        ax = fig.add_subplot(gs[0, 0])
+        ax.errorbar(kap, [r["corridor"] for r in rows], yerr=[r["corridor_sd"] for r in rows],
+                    fmt="o-", ms=3, color=C_LAST, lw=1.1, capsize=2, elinewidth=0.6)
+        ax.set_xlabel(r"weight tilt $\kappa$")
+        ax.set_ylabel("corridor width (m)")
 
-    # --- the mechanism
-    ax = fig.add_subplot(gs[0, 1])
-    for i in range(N + 1):
-        ax.errorbar(kap, [r["per_seg"][i] for r in rows], yerr=[r["per_seg_sd"][i] for r in rows],
-                    fmt="o-", ms=3, color=cols[i], lw=1.1, capsize=2, elinewidth=0.6,
-                    label=seg_label(i, N))
-    ax.set_xlabel(r"weight tilt $\kappa$")
-    ax.set_ylabel("off-tracking in\ncurved sections (m)")
-    ax.legend(fontsize=6.5)
-    ax.set_title("off-tracking per segment", fontsize=8, loc="left")
+        # --- the mechanism
+        ax = fig.add_subplot(gs[0, 1])
+        for i in range(N + 1):
+            ax.errorbar(kap, [r["per_seg"][i] for r in rows], yerr=[r["per_seg_sd"][i] for r in rows],
+                        fmt="o-", ms=2.6, color=cols[i], lw=1.0, capsize=1.6, elinewidth=0.5,
+                        label=seg_label(i, N))
+        ax.set_xlabel(r"weight tilt $\kappa$")
+        ax.set_ylabel("off-tracking (m)")
+        ax.set_ylim(0, None)
+        handles, labels = ax.get_legend_handles_labels()
 
-    # --- the reachable design trade-off
-    ax = fig.add_subplot(gs[0, 2])
-    w = [r["worst"] for r in rows]
-    c = [r["corridor"] for r in rows]
-    ax.plot(w, c, "-", color=C_GREY, lw=1.0, zorder=1)
-    sc = ax.scatter(w, c, c=kap, cmap="viridis", s=24, zorder=3)
-    cb = fig.colorbar(sc, ax=ax, pad=0.02)
-    cb.set_label(r"$\kappa$", fontsize=7.5)
-    cb.ax.tick_params(labelsize=6.5)
-    # The comparison methods are annotated rather than put in a legend: they sit
-    # in the middle of the panel, where any legend box would cover one of them.
-    mark = {"pursuit": ("s", "#7C8B99", "pure\npursuit", (-7, 2), "right"),
-            "mp2021": ("^", "#4E7CB0", "Micha\u0142ek &\nPazderski", (-4, -8), "left")}
-    for tag, (mk, col, lab, off, ha) in mark.items():
-        if tag in refs:
-            ax.plot(refs[tag]["worst"], refs[tag]["corridor"], mk, color=col, ms=6, zorder=4)
-            ax.annotate(lab, (refs[tag]["worst"], refs[tag]["corridor"]),
-                        textcoords="offset points", xytext=off, fontsize=6.2,
-                        color=col, ha=ha, va="top")
-    i0 = int(np.argmin(np.abs(kap)))           # kappa = 0: the even, proposed setting
-    ax.annotate(r"even ($\kappa=0$)", (w[i0], c[i0]), textcoords="offset points",
-                xytext=(16, -18), fontsize=6.2, color="#444444", ha="left", va="center",
-                arrowprops=dict(arrowstyle="-", lw=0.6, color="#444444", shrinkA=0, shrinkB=2))
-    ax.set_xlabel("worst-segment\noff-tracking (m)")
-    ax.set_ylabel("corridor width (m)")
-    # Leave headroom: the comparison points sit well outside the reachable set,
-    # and the default limits clip them against the axes.
-    xs = w + [refs[t]["worst"] for t in refs]
-    ys = c + [refs[t]["corridor"] for t in refs]
-    mx, my = 0.10 * (max(xs) - min(xs)), 0.16 * (max(ys) - min(ys))
-    ax.set_xlim(min(xs) - mx, max(xs) + mx)
-    ax.set_ylim(min(ys) - my, max(ys) + my)
-    ax.set_title("worst segment and corridor", fontsize=8, loc="left")
-    save(fig, "s6_corridor_design")
+        # --- the reachable design trade-off
+        ax = fig.add_subplot(gs[1, :])
+        w = [r["worst"] for r in rows]
+        c = [r["corridor"] for r in rows]
+        ax.plot(w, c, "-", color=C_GREY, lw=0.9, zorder=1)
+        sc = ax.scatter(w, c, c=kap, cmap="viridis", s=18, zorder=3)
+        cb = fig.colorbar(sc, ax=ax, pad=0.01, aspect=18)
+        cb.set_label(r"weight tilt $\kappa$")
+        # The comparison methods are annotated rather than put in a legend: they sit
+        # in the middle of the panel, where any legend box would cover one of them.
+        mark = {"pursuit": ("s", "#7C8B99", "Pure pursuit", (-6, 0), "right", "center"),
+                "mp2021": ("^", "#4E7CB0", "Micha\u0142ek & Pazderski", (0, -7), "center", "top")}
+        for tag, (mk, col, lab, off, ha, va) in mark.items():
+            if tag in refs:
+                ax.plot(refs[tag]["worst"], refs[tag]["corridor"], mk, color=col, ms=5, zorder=4)
+                ax.annotate(lab, (refs[tag]["worst"], refs[tag]["corridor"]),
+                            textcoords="offset points", xytext=off,
+                            color=col, ha=ha, va=va)
+        i0 = int(np.argmin(np.abs(kap)))           # kappa = 0: the even, proposed setting
+        ax.plot(w[i0], c[i0], "o", ms=7.5, mfc="none", mec="#222222", mew=0.8, zorder=5)
+        ax.annotate(r"even ($\kappa=0$)", (w[i0], c[i0]), textcoords="offset points",
+                    xytext=(-6, 40), color="#222222", ha="left", va="bottom",
+                    arrowprops=dict(arrowstyle="-", lw=0.6, color="#222222", shrinkA=1, shrinkB=4))
+        ax.set_xlabel("worst-segment off-tracking (m)")
+        ax.set_ylabel("corridor width (m)")
+        # Leave headroom: the comparison points sit well outside the reachable set,
+        # and the default limits clip them against the axes.
+        xs = w + [refs[t]["worst"] for t in refs]
+        ys = c + [refs[t]["corridor"] for t in refs]
+        mx, my = 0.06 * (max(xs) - min(xs)), 0.14 * (max(ys) - min(ys))
+        ax.set_xlim(min(xs) - mx, max(xs) + 0.5 * mx)
+        ax.set_ylim(min(ys) - my, max(ys) + my)
+        fig.legend(handles, labels, loc="outside upper center", ncol=3, frameon=False,
+                   handlelength=1.6, columnspacing=1.0)
+        save(fig, "s6_corridor_design")
 
 
 if __name__ == "__main__":

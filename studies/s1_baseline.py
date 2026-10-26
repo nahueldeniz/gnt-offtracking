@@ -37,8 +37,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from parallel import pmap  # noqa: E402
-from common import (C_GREY, C_PATH, OUT, _writable, dump, save, seg_colours,  # noqa: E402
-                    seg_label, study_path, t_final_for, vehicle, g2t)
+from common import (C_GREY, C_PATH, COL_W, OUT, _writable, dump, paper_style, save,  # noqa: E402
+                    seg_colours, seg_label, study_path, t_final_for, vehicle, g2t)
 
 from gntpf import (RefGenWeights, SensorModel, SimConfig, TrackingNMPC,  # noqa: E402
                    make_path, simulate)
@@ -47,8 +47,10 @@ STRATEGIES = ["tractor", "last", "guidance", "proposed"]
 NICE = {"tractor": "Tractor emphasised", "last": "Last trailer emphasised",
         "guidance": "Middle segment emphasised", "proposed": "Even (proposed setting)"}
 SHORT = {"tractor": "Tractor", "last": "Last", "guidance": "Middle", "proposed": "Even"}
-LEG = {"tractor": "Tractor emph.", "last": "Last trailer emph.",
-       "guidance": "Middle segment emph.", "proposed": "Even (proposed)"}
+LEG = {"tractor": "Tractor emph.", "last": "Last emph.",
+       "guidance": "Middle emph.", "proposed": "Even (proposed)"}
+TITLE = {"tractor": "Tractor emphasised", "last": "Last trailer emphasised",
+         "guidance": "Middle emphasised", "proposed": "Even (proposed)"}
 BARC = {"tractor": "#4A5560", "last": "#7C8B99", "guidance": "#4E7CB0", "proposed": "#A8372B"}
 
 # Fraction of their even-setting weights kept by the segments that are not
@@ -158,69 +160,58 @@ def load_traces(tag):
 
 
 def figure(path, results, traces, N, tag=""):
-    """Trajectories of the four weightings of the proposed generator, and their deviations."""
+    """One column wide, drawn at its printed size: the trajectories of the four
+    weightings of the proposed generator, and their deviations."""
     cols = seg_colours(N)
-    fig = plt.figure(figsize=(7.2, 4.0))
-    gs = fig.add_gridspec(3, 4, height_ratios=[0.72, 0.26, 0.9], hspace=0.38, wspace=0.32)
     a0, a1 = path.eval_start, path.eval_end
     k0 = int(np.searchsorted(path.s, a0)); k1 = int(np.searchsorted(path.s, a1))
+    with paper_style():
+        fig = plt.figure(figsize=(COL_W, 3.95), layout="constrained")
+        gs = fig.add_gridspec(3, 2, height_ratios=[1.0, 1.0, 1.55])
+        handles = None
+        for j, s in enumerate(STRATEGIES):
+            ax = fig.add_subplot(gs[j // 2, j % 2])
+            P = traces[s]["P"]
+            ax.plot(path.xy[0, k0:k1], path.xy[1, k0:k1], "--", color=C_PATH, lw=0.6,
+                    label="Nominal path")
+            for i in range(N + 1):
+                ax.plot(P[i, 0], P[i, 1], color=cols[i], lw=0.7, label=seg_label(i, N))
+            if traces[s]["diverged"]:
+                ax.plot(P[0, 0, -1], P[0, 1, -1], "kx", ms=5, mew=1.2, label="Run stopped")
+            ax.set_aspect("equal")
+            ax.set_title(TITLE[s])
+            if j // 2 == 1:
+                ax.set_xlabel("x (m)")
+            else:
+                ax.tick_params(labelbottom=False)
+            if j % 2 == 0:
+                ax.set_ylabel("y (m)")
+            else:
+                ax.tick_params(labelleft=False)
+            h, l = ax.get_legend_handles_labels()
+            if handles is None or len(h) > len(handles[0]):
+                handles = (h, l)
 
-    handles = None
-    for j, s in enumerate(STRATEGIES):
-        ax = fig.add_subplot(gs[0, j])
-        P = traces[s]["P"]
-        ax.plot(path.xy[0, k0:k1], path.xy[1, k0:k1], "--", color=C_PATH, lw=0.8,
-                label="Nominal path")
-        for i in range(N + 1):
-            ax.plot(P[i, 0], P[i, 1], color=cols[i], lw=0.9, label=seg_label(i, N))
-        if traces[s]["diverged"]:
-            ax.plot(P[0, 0, -1], P[0, 1, -1], "kx", ms=6, mew=1.4, label="Run stopped")
-        ax.set_aspect("equal")
-        ax.set_title("Ours: " + SHORT[s].lower() + ("" if s == "proposed" else " emph."),
-                     fontsize=7.6)
-        ax.tick_params(labelsize=6.5)
-        ax.set_xlabel("x (m)", fontsize=7)
-        if j == 0:
-            ax.set_ylabel("y (m)", fontsize=7)
-        h, l = ax.get_legend_handles_labels()
-        if handles is None or len(h) > len(handles[0]):
-            handles = (h, l)
-
-    # Both legends sit in their own row, clear of every panel.
-    lax = fig.add_subplot(gs[1, :]); lax.axis("off")
-    leg1 = lax.legend(*handles, loc="upper center", ncol=len(handles[0]), fontsize=7,
-                      frameon=False, bbox_to_anchor=(0.5, 1.15), handlelength=1.8)
-    lax.add_artist(leg1)
-    bar_h = [plt.Rectangle((0, 0), 1, 1, color=BARC[s]) for s in STRATEGIES]
-    bar_l = [LEG[s] + ("" if "worst_curved" in results[s] else " (n.c.)") for s in STRATEGIES]
-    lax.legend(bar_h, bar_l, loc="lower center", ncol=4, fontsize=7, frameon=False,
-               bbox_to_anchor=(0.5, -0.25), handlelength=1.2)
-
-    ax = fig.add_subplot(gs[2, :3])
-    w = 0.2
-    for j, s in enumerate(STRATEGIES):
-        r = results[s]
-        if "mean_curved" in r:
-            ax.bar(np.arange(N + 1) + (j - 1.5) * w, r["mean_curved"], width=w,
-                   yerr=r["mean_curved_sd"], capsize=2, error_kw=dict(lw=0.6),
-                   color=BARC[s])
-    ax.set_xticks(np.arange(N + 1))
-    ax.set_xticklabels([seg_label(i, N) for i in range(N + 1)], fontsize=7)
-    ax.tick_params(axis="y", labelsize=6.5)
-    ax.set_ylabel("mean off-tracking in\ncurved sections (m)", fontsize=7)
-
-    ax = fig.add_subplot(gs[2, 3])
-    x = np.arange(len(STRATEGIES))
-    vals = [results[s].get("worst_curved", np.nan) for s in STRATEGIES]
-    ax.bar(x, vals, color=[BARC[s] for s in STRATEGIES], width=0.62)
-    for xi, s in zip(x, STRATEGIES):
-        if "worst_curved" not in results[s]:
-            ax.text(xi, 0.02, "n.c.", ha="center", va="bottom", fontsize=6.5, rotation=90)
-    ax.set_xticks(x)
-    ax.set_xticklabels([SHORT[s] for s in STRATEGIES], rotation=30, ha="right", fontsize=6.5)
-    ax.tick_params(axis="y", labelsize=6.5)
-    ax.set_ylabel("worst segment (m)", fontsize=7)
-    save(fig, f"s1_baseline{tag}")
+        ax = fig.add_subplot(gs[2, :])
+        w = 0.2
+        for j, s in enumerate(STRATEGIES):
+            r = results[s]
+            if "mean_curved" in r:
+                ax.bar(np.arange(N + 1) + (j - 1.5) * w, r["mean_curved"], width=w,
+                       yerr=r["mean_curved_sd"], capsize=1.5, error_kw=dict(lw=0.5),
+                       color=BARC[s])
+        ax.set_xticks(np.arange(N + 1))
+        ax.set_xticklabels([seg_label(i, N) for i in range(N + 1)])
+        ax.set_ylabel("mean off-tracking in\ncurved sections (m)")
+        bar_h = [plt.Rectangle((0, 0), 1, 1, color=BARC[s]) for s in STRATEGIES]
+        bar_l = [LEG[s] + ("" if "worst_curved" in results[s] else " (n.c.)") for s in STRATEGIES]
+        # above the panel rather than inside it, where it would cover the bars
+        ax.legend(bar_h, bar_l, loc="lower center", bbox_to_anchor=(0.5, 1.0), ncol=2,
+                  frameon=False, handlelength=1.0, columnspacing=1.0, borderaxespad=0.2)
+        ax.set_ylim(0, 1.12 * max(max(results[s].get("mean_curved", [0])) for s in STRATEGIES))
+        fig.legend(*handles, loc="outside upper center", ncol=3, frameon=False,
+                   handlelength=1.4, columnspacing=0.8)
+        save(fig, f"s1_baseline{tag}")
 
 
 if __name__ == "__main__":

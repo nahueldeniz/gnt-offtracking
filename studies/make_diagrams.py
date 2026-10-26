@@ -16,108 +16,141 @@ BOX = "#F2F4F6"
 
 # --------------------------------------------------------------------------- #
 def architecture():
-    """Block diagram of the two-stage architecture, drawn to the full text width.
+    """Block diagram of the two-stage architecture, drawn at the full text width
+    and at its printed size: the data coordinates are inches, so every font
+    prints at its nominal size.
 
     The boxes are sized from the rendered extent of their own text rather than
-    from guessed widths, so a longer label widens its box instead of spilling
-    out of it.
+    from guessed widths, and the gaps between them are what remains of the text
+    width, so a longer label widens its box instead of spilling out of it.
     """
-    W, H = 16.0, 4.35
-    fig, ax = plt.subplots(figsize=(7.16, 1.95))
-    ax.set_xlim(-0.55, W); ax.set_ylim(-0.15, H); ax.axis("off")
-    ax.set_position([0, 0, 1, 1])
+    from common import TEXT_W, paper_style
 
-    PAD_X, PAD_Y = 0.42, 0.34
-    boxes = {}
+    W, H = TEXT_W, 2.04
+    FT, FS = 9.5, 9.0                    # box titles, everything else
+    PAD_X, PAD_Y, MARGIN = 0.12, 0.085, 0.04
+    ROW, EST = 1.35, 0.40
 
-    def block(key, cx, cy, title, sub, fill=BOX, edge=INK):
-        """Place a titled box centred on (cx, cy), sized to its own text."""
-        t = ax.text(cx, cy + 0.17, title, ha="center", va="center",
-                    fontsize=8.0, fontweight="bold", color=INK, zorder=4)
-        u = ax.text(cx, cy - 0.34, sub, ha="center", va="center",
-                    fontsize=6.3, color=SOFT, zorder=4, linespacing=1.35)
-        fig.canvas.draw()
-        inv = ax.transData.inverted()
-        ext = [inv.transform(o.get_window_extent()) for o in (t, u)]
-        x0 = min(e[0][0] for e in ext) - PAD_X
-        x1 = max(e[1][0] for e in ext) + PAD_X
-        y0 = min(e[0][1] for e in ext) - PAD_Y
-        y1 = max(e[1][1] for e in ext) + PAD_Y
-        # keep the box centred on cx even if the two lines differ in width
-        half = max(cx - x0, x1 - cx)
-        x0, x1 = cx - half, cx + half
-        ax.add_patch(FancyBboxPatch((x0, y0), x1 - x0, y1 - y0,
-                                    boxstyle="round,pad=0.0,rounding_size=0.14",
-                                    linewidth=1.05, edgecolor=edge, facecolor=fill,
-                                    zorder=3))
-        boxes[key] = (x0, y0, x1, y1)
-        return boxes[key]
+    with paper_style():
+        fig = plt.figure(figsize=(W, H))
+        ax = fig.add_axes([0, 0, 1, 1])
+        ax.set_xlim(0, W); ax.set_ylim(0, H); ax.axis("off")
+        boxes = {}
 
-    def arrow(p0, p1, col=INK, ls="-", lw=1.0, head=True):
-        """A signal leg; only the last leg of a multi-segment route carries a head."""
-        ax.add_patch(FancyArrowPatch(p0, p1, arrowstyle="-|>" if head else "-",
-                                     mutation_scale=9, linewidth=lw, color=col,
-                                     linestyle=ls, shrinkA=0, shrinkB=0, zorder=2))
+        def texts(cx, cy, title, sub):
+            t = ax.text(cx, cy, title, ha="center", va="bottom", fontsize=FT,
+                        fontweight="bold", color=INK, zorder=4)
+            u = ax.text(cx, cy - 0.05, sub, ha="center", va="top", fontsize=FS,
+                        color=SOFT, zorder=4, linespacing=1.3)
+            return t, u
 
-    def label(x, y, txt, ha="center", va="bottom"):
-        ax.text(x, y, txt, ha=ha, va=va, fontsize=6.4, color=SOFT, zorder=5)
+        def extent(objs):
+            fig.canvas.draw()
+            inv = ax.transData.inverted()
+            ext = [inv.transform(o.get_window_extent()) for o in objs]
+            return (min(e[0][0] for e in ext), min(e[0][1] for e in ext),
+                    max(e[1][0] for e in ext), max(e[1][1] for e in ext))
 
-    ROW, EST = 2.95, 0.80
-    block("path", 1.45, ROW, "Nominal path",
-          "local polynomial window,\nadvancing at $\\sigma$")
-    block("ref", 6.75, ROW, "Reference generator",
-          "geometry exact,\nreachable in one step")
-    block("mpc", 10.85, ROW, "Tracking NMPC",
-          "horizon $N_c$,\nno terminal set")
-    block("veh", 14.45, ROW, "GNT vehicle", "$N$ passive trailers")
-    block("est", 8.40, EST, "Moving horizon estimator",
-          "window $N_e$, constrained")
+        def width(title, sub):
+            objs = texts(0.0, 0.0, title, sub)
+            x0, _, x1, _ = extent(objs)
+            for o in objs:
+                o.remove()
+            return x1 - x0 + 2 * PAD_X
 
-    # the dashed group around the two problems solved every period
-    gx0 = boxes["ref"][0] - 0.14
-    gx1 = boxes["mpc"][2] + 0.14
-    gy0 = boxes["ref"][1] - 0.28
-    gy1 = boxes["ref"][3] + 0.28
-    ax.add_patch(FancyBboxPatch((gx0, gy0), gx1 - gx0, gy1 - gy0,
-                                boxstyle="round,pad=0.0,rounding_size=0.10",
-                                linewidth=0.9, edgecolor=SOFT, facecolor="none",
-                                linestyle=(0, (4, 3)), zorder=1))
-    ax.text(0.5 * (gx0 + gx1), gy1 + 0.16,
-            "solved in sequence, once per sampling period",
-            ha="center", va="bottom", fontsize=6.5, color=SOFT, style="italic")
+        def block(key, cx, cy, title, sub):
+            """A titled box centred on (cx, cy), sized to its own text."""
+            t, u = texts(cx, cy, title, sub)
+            x0, y0, x1, y1 = extent((t, u))
+            # centre the pair of lines vertically on cy
+            dy = cy - 0.5 * (y0 + y1)
+            for o in (t, u):
+                o.set_y(o.get_position()[1] + dy)
+            y0, y1 = y0 + dy, y1 + dy
+            half = max(cx - x0, x1 - cx) + PAD_X
+            x0, x1 = cx - half, cx + half
+            y0, y1 = y0 - PAD_Y, y1 + PAD_Y
+            ax.add_patch(FancyBboxPatch((x0, y0), x1 - x0, y1 - y0,
+                                        boxstyle="round,pad=0.0,rounding_size=0.05",
+                                        linewidth=1.0, edgecolor=INK, facecolor=BOX,
+                                        zorder=3))
+            boxes[key] = (x0, y0, x1, y1)
+            return boxes[key]
 
-    # ---------------------------------------------------------------- signals
-    arrow((boxes["path"][2], ROW), (boxes["ref"][0], ROW))
-    label(0.5 * (boxes["path"][2] + boxes["ref"][0]), ROW + 0.16, "$X(s),\\,Y(s)$")
+        def arrow(p0, p1, col=INK, ls="-", lw=1.0, head=True):
+            """A signal leg; only the last leg of a multi-segment route carries a head."""
+            ax.add_patch(FancyArrowPatch(p0, p1, arrowstyle="-|>" if head else "-",
+                                         mutation_scale=9, linewidth=lw, color=col,
+                                         linestyle=ls, shrinkA=0, shrinkB=0, zorder=2))
 
-    arrow((boxes["ref"][2], ROW), (boxes["mpc"][0], ROW))
-    label(0.5 * (boxes["ref"][2] + boxes["mpc"][0]), ROW + 0.16, "$q^{\\mathrm{ref}}$")
+        def label(x, y, txt, ha="center", va="bottom"):
+            ax.text(x, y, txt, ha=ha, va=va, fontsize=FS, color=SOFT, zorder=5,
+                    linespacing=1.2)
 
-    arrow((boxes["mpc"][2], ROW), (boxes["veh"][0], ROW))
-    label(0.5 * (boxes["mpc"][2] + boxes["veh"][0]), ROW + 0.16, "$u_k$")
+        top = [("path", "Nominal path", "local polynomial\nwindow, advancing at $\\sigma$"),
+               ("ref", "Reference generator", "geometry exact,\nreachable in one step"),
+               ("mpc", "Tracking NMPC", "horizon $N_c$,\nno terminal set"),
+               ("veh", "GNT vehicle", "$N$ passive\ntrailers")]
+        widths = [width(t, s) for _, t, s in top]
+        # what is left of the text width goes to the three gaps, the first one,
+        # which carries the widest signal label, taking the largest share
+        share = np.array([1.25, 1.0, 0.8])
+        gaps = share / share.sum() * (W - 2 * MARGIN - sum(widths))
+        x = MARGIN
+        for (key, t, s), w, g in zip(top, widths, list(gaps) + [0.0]):
+            block(key, x + 0.5 * w, ROW, t, s)
+            x += w + g
 
-    # measurements: down the right-hand side and back into the estimator
-    y_meas = EST
-    x_veh = 0.5 * (boxes["veh"][0] + boxes["veh"][2])
-    arrow((x_veh, boxes["veh"][1]), (x_veh, y_meas), col=SOFT, head=False)
-    arrow((x_veh, y_meas), (boxes["est"][2], y_meas), col=SOFT)
-    ax.text(0.5 * (x_veh + boxes["est"][2]), y_meas - 0.30,
-            "$r_k$: tractor pose, joint angles", ha="center", va="top",
-            fontsize=6.6, color=SOFT)
+        # the estimator sits under the two problems it serves
+        cx_est = 0.5 * (0.5 * (boxes["ref"][0] + boxes["ref"][2])
+                        + 0.5 * (boxes["mpc"][0] + boxes["mpc"][2])) + 0.25
+        block("est", cx_est, EST, "Moving horizon estimator", "window $N_e$, constrained")
 
-    # the estimate, up into the tracking problem and across to the generator
-    x_up = 0.5 * (boxes["mpc"][0] + boxes["mpc"][2]) - 0.55
-    arrow((x_up, boxes["est"][3]), (x_up, boxes["mpc"][1]), col=SOFT)
-    # centred in the clear band between the estimator and the dashed group
-    ax.text(x_up + 0.16, 0.5 * (boxes["est"][3] + gy0),
-            "$\\hat q_{k|k}$", ha="left", va="center", fontsize=6.6, color=SOFT)
+        # the dashed group around the two problems solved every period
+        gx0 = boxes["ref"][0] - 0.06
+        gx1 = boxes["mpc"][2] + 0.06
+        gy0 = min(boxes["ref"][1], boxes["mpc"][1]) - 0.10
+        gy1 = max(boxes["ref"][3], boxes["mpc"][3]) + 0.10
+        ax.add_patch(FancyBboxPatch((gx0, gy0), gx1 - gx0, gy1 - gy0,
+                                    boxstyle="round,pad=0.0,rounding_size=0.05",
+                                    linewidth=0.9, edgecolor=SOFT, facecolor="none",
+                                    linestyle=(0, (4, 3)), zorder=1))
+        ax.text(0.5 * (gx0 + gx1), gy1 + 0.04,
+                "solved in sequence, once per sampling period",
+                ha="center", va="bottom", fontsize=FS, color=SOFT, style="italic")
 
-    x_back = 0.5 * (boxes["ref"][0] + boxes["ref"][2]) - 0.55
-    arrow((boxes["est"][0], EST), (x_back, EST), col=SOFT, ls=(0, (3, 2)),
-          head=False)
-    arrow((x_back, EST), (x_back, boxes["ref"][1]), col=SOFT, ls=(0, (3, 2)))
+        # ------------------------------------------------------------ signals
+        def mid(a, b):
+            return 0.5 * (boxes[a][2] + boxes[b][0])
 
-    save(fig, "architecture")
+        # the labels of the legs that cross the dashed group are centred on the
+        # part of the leg outside it
+        arrow((boxes["path"][2], ROW), (boxes["ref"][0], ROW))
+        label(0.5 * (boxes["path"][2] + gx0), ROW + 0.05, "$X(s)$,\n$Y(s)$")
+        arrow((boxes["ref"][2], ROW), (boxes["mpc"][0], ROW))
+        label(mid("ref", "mpc"), ROW + 0.05, "$q^{\\mathrm{ref}}$")
+        arrow((boxes["mpc"][2], ROW), (boxes["veh"][0], ROW))
+        label(0.5 * (gx1 + boxes["veh"][0]), ROW + 0.05, "$u_k$")
+
+        # measurements: down the right-hand side and back into the estimator
+        x_veh = 0.5 * (boxes["veh"][0] + boxes["veh"][2])
+        arrow((x_veh, boxes["veh"][1]), (x_veh, EST), col=SOFT, head=False)
+        arrow((x_veh, EST), (boxes["est"][2], EST), col=SOFT)
+        ax.text(0.5 * (x_veh + boxes["est"][2]), EST - 0.06,
+                "$r_k$: tractor pose,\njoint angles", ha="center", va="top",
+                fontsize=FS, color=SOFT, linespacing=1.2)
+
+        # the estimate, up into the tracking problem and across to the generator
+        x_up = 0.5 * (boxes["mpc"][0] + boxes["mpc"][2])
+        arrow((x_up, boxes["est"][3]), (x_up, boxes["mpc"][1]), col=SOFT)
+        ax.text(x_up + 0.05, 0.5 * (boxes["est"][3] + gy0),
+                "$\\hat q_{k|k}$", ha="left", va="center", fontsize=FS, color=SOFT)
+
+        x_back = 0.5 * (boxes["ref"][0] + boxes["ref"][2])
+        arrow((boxes["est"][0], EST), (x_back, EST), col=SOFT, ls=(0, (3, 2)),
+              head=False)
+        arrow((x_back, EST), (x_back, boxes["ref"][1]), col=SOFT, ls=(0, (3, 2)))
+        save(fig, "architecture")
 
 
 # --------------------------------------------------------------------------- #
@@ -130,6 +163,15 @@ def _norm(t):
 
 
 def geometry():
+    """See ``_geometry``: drawn in the paper's typeface and cropped to the drawing,
+    which is included at the column width (a scale of about 1.1, so the smallest
+    label prints at about 9 pt)."""
+    from common import paper_style
+    with paper_style(**{"savefig.bbox": "tight", "savefig.pad_inches": 0.02}):
+        _geometry()
+
+
+def _geometry():
     """Rigid-body diagram of a generalised two-trailer vehicle.
 
     Drafting layout: the vehicle runs roughly horizontally with enough
@@ -256,6 +298,13 @@ def geometry():
 
 # --------------------------------------------------------------------------- #
 def hitching_classes():
+    """See ``_hitching_classes``; drawn in the paper style, at its printed size."""
+    from common import paper_style
+    with paper_style():
+        _hitching_classes()
+
+
+def _hitching_classes():
     """The three hitching classes, drawn so the distinction is visible.
 
     This replaces a photograph.  A photograph of an articulated vehicle shows
@@ -273,20 +322,25 @@ def hitching_classes():
     offset places the hitch behind the axle of the segment in front and a
     negative one ahead of it, as a fifth wheel sits ahead of a tractor's axle.
     """
-    fig, ax = plt.subplots(figsize=(7.0, 3.7))
-    ax.set_aspect("equal"); ax.axis("off")
-
+    # Drawn at the printed size, one column wide: the axes fill the figure and the
+    # figure height follows from the data limits at equal aspect, so every font
+    # prints at its nominal size.
+    from common import COL_W
     HALF, ROW = 0.34, 2.45
+    X0, X1, Y0, Y1 = -0.10, 9.30, -2 * ROW - 2.05, 1.00
+    fig = plt.figure(figsize=(COL_W, COL_W * (Y1 - Y0) / (X1 - X0)))
+    ax = fig.add_axes([0, 0, 1, 1])
+    ax.set_aspect("equal"); ax.axis("off")
     cases = [
-        ("SNT", "Standard:\nevery hitch on the axle",
+        ("SNT", "Standard:\nevery hitch\non the axle",
          [0.0, 0.0], [2.05, 1.75], [0.30, 0.02, -0.26]),
-        ("nSNT", "Non-standard:\nevery hitch off the axle",
+        ("nSNT", "Non-standard:\nevery hitch\noff the axle",
          [0.80, 0.62], [2.05, 1.75], [0.30, 0.02, -0.26]),
         # The last joint is articulated more than the others on purpose: with a
         # negative offset the drawbar runs forward past the axle and then back,
         # and at a small joint angle the two links lie almost on top of each
         # other and the arrangement cannot be read.
-        ("GNT", "Generalised:\nany kind, any sign",
+        ("GNT", "Generalised:\nany kind,\nany sign",
          [0.80, 0.0, -0.62], [1.85, 1.60, 1.50], [0.34, 0.06, -0.14, -0.62]),
     ]
 
@@ -330,7 +384,7 @@ def hitching_classes():
             # where the hitch sits close to one; alternate above and below.
             dy = -18 if (Lh[k] >= 0) else 14
             ax.annotate(lab, joints[k], textcoords="offset points",
-                        xytext=(0, dy), ha="center", fontsize=7.2,
+                        xytext=(0, dy), ha="center", fontsize=9,
                         color=(INK if on_axle else SOFT), zorder=10)
             # The offset dimension is drawn only where the concept is being
             # defined.  Repeating it on the generalised row, which already
@@ -346,65 +400,74 @@ def hitching_classes():
                     ax.plot([q[0], (q + off)[0]], [q[1], (q + off)[1]], "-",
                             color=FAINT, lw=0.6, zorder=2)
 
-        ax.text(0.0, y0 + 0.50, name, fontsize=10.5, fontweight="bold",
+        ax.text(0.0, y0 + 0.62, name, fontsize=10.5, fontweight="bold",
                 color=INK, ha="left", va="center")
-        ax.text(0.0, y0 - 0.22, blurb, fontsize=7.4, color=SOFT,
-                ha="left", va="center", linespacing=1.5)
+        ax.text(0.0, y0 + 0.30, blurb, fontsize=9, color=SOFT,
+                ha="left", va="top", linespacing=1.3)
         if name == "GNT":
-            ax.text(0.0, y0 - 1.08, "the class this paper addresses;\nthe field platform is of this kind",
-                    fontsize=7.2, color=C_LAST, ha="left", va="center",
-                    style="italic", linespacing=1.5)
+            ax.text(0.0, y0 - 1.05, "the class this paper addresses;\nthe field platform is of this kind",
+                    fontsize=9, color=C_LAST, ha="left", va="top",
+                    style="italic", linespacing=1.3)
 
     ax.plot([], [], "o", color="white", markeredgecolor=INK, markeredgewidth=1.3,
             ms=5.4, label="hitch off the axle")
     ax.plot([], [], "o", color=INK, markeredgecolor=INK, markeredgewidth=1.3,
             ms=5.4, label="hitch on the axle")
-    ax.legend(loc="lower center", bbox_to_anchor=(0.68, -0.055), ncol=2,
-              fontsize=7.4, frameon=False, handletextpad=0.5, borderpad=0.2,
-              columnspacing=1.6)
-    ax.set_xlim(-0.15, 9.1); ax.set_ylim(-2 * ROW - 1.75, 1.05)
+    ax.legend(loc="lower right", bbox_to_anchor=(0.985, 0.005), ncol=1,
+              fontsize=9, frameon=False, handletextpad=0.4, borderpad=0.0,
+              borderaxespad=0.0, labelspacing=0.3)
+    ax.set_xlim(X0, X1); ax.set_ylim(Y0, Y1)
     save(fig, "hitching_classes")
 
 
 def paths_figure():
-    """The three test geometries, each with its curvature profile beneath."""
+    """The three test geometries, one column wide and drawn at their printed size,
+    each coloured by the magnitude of its curvature.  The agricultural path, the
+    one most studies use, is given the widest panel."""
+    from matplotlib.colors import ListedColormap, Normalize
+    from scipy.ndimage import median_filter
     from gntpf import make_path
-    from common import C_GREY, C_PATH
+    from common import COL_W, paper_style
 
-    specs = [("agricultural", "(a) agricultural: omega headland turns"),
-             ("rounded_rect", "(b) rounded rectangle"),
-             ("lemniscate", "(c) lemniscate")]
-
-    fig, axes = plt.subplots(2, 3, figsize=(7.2, 3.8),
-                             gridspec_kw=dict(height_ratios=[1.45, 1.0], hspace=0.70, wspace=0.34))
-    for j, (name, title) in enumerate(specs):
-        p = make_path(name)
-        # The finite-difference curvature has single-sample spikes where segments
-        # sampled at different spacings meet (the corners of the rounded
-        # rectangle); a five-sample median removes them and nothing else.
-        from scipy.ndimage import median_filter
-        k = median_filter(p.curvature(), size=5, mode="nearest")
-        kmax = np.percentile(k, 99.5)
-        ax = axes[0, j]
-        ax.plot(p.xy[0], p.xy[1], "-", color=C_PATH, lw=1.0)
-        ax.plot(p.xy[0, 0], p.xy[1, 0], "o", color=C_TRACTOR, ms=4, zorder=5)
-        ax.set_aspect("equal")
-        # the quantities that matter live in the title, clear of the data
-        ax.set_title(f"{title}\n{p.length:.0f} m long, min radius "
-                     f"{1 / max(kmax, 1e-9):.1f} m", fontsize=7.6)
-        ax.set_xlabel("x (m)", fontsize=7.5)
-        if j == 0:
-            ax.set_ylabel("y (m)", fontsize=7.5)
-        ax.tick_params(labelsize=6.5)
-
-        ax = axes[1, j]
-        ax.plot(p.s, k, "-", color=C_GREY, lw=0.7)
-        ax.set_ylim(0, max(kmax * 1.25, 0.1))
-        ax.set_xlabel("arc length (m)", fontsize=7.5)
-        if j == 0:
-            ax.set_ylabel(r"$|$curvature$|$ (m$^{-1}$)", fontsize=7.5)
-        ax.tick_params(labelsize=6.5)
-    save(fig, "paths")
+    # The caption names the paths; the panels carry their letters only.
+    specs = [("agricultural", "(a)"), ("rounded_rect", "(b)"), ("lemniscate", "(c)")]
+    paths = [make_path(n) for n, _ in specs]
+    norm = Normalize(0.0, 1.0)
+    # viridis without its palest yellow, which is faint against white
+    cmap = ListedColormap(plt.get_cmap("viridis")(np.linspace(0.0, 0.88, 256)))
+    with paper_style():
+        fig = plt.figure(figsize=(COL_W, 1.75), layout="constrained")
+        fig.get_layout_engine().set(w_pad=0.02, wspace=0.03)
+        gs = fig.add_gridspec(2, 3, width_ratios=[1.85, 1.0, 0.8], height_ratios=[1.0, 0.06])
+        for j, ((name, title), p) in enumerate(zip(specs, paths)):
+            # The finite-difference curvature has single-sample spikes where segments
+            # sampled at different spacings meet (the corners of the rounded
+            # rectangle); a five-sample median removes them and nothing else.
+            k = median_filter(p.curvature(), size=5, mode="nearest")
+            ax = fig.add_subplot(gs[0, j])
+            # The paths are sampled every few millimetres.  The curvature is
+            # quantised to 64 colour levels and each run of samples at one level is
+            # drawn as a single line, which keeps the figure a small vector file;
+            # 64 levels are finer than the eye resolves on the colour bar.
+            lev = np.clip(np.round(norm(k) * 63), 0, 63).astype(int)
+            cut = np.flatnonzero(np.diff(lev)) + 1
+            for a, b in zip(np.r_[0, cut], np.r_[cut, lev.size]):
+                seg = p.xy[:, a:min(b + 1, lev.size)]
+                ax.plot(seg[0], seg[1], color=cmap(lev[a] / 63), lw=1.3,
+                        solid_capstyle="round")
+            ax.plot(p.xy[0, 0], p.xy[1, 0], "o", ms=4, mfc="white", mec="black", mew=0.8, zorder=5)
+            ax.set_xlim(p.xy[0].min() - 0.8, p.xy[0].max() + 0.8)
+            ax.set_ylim(p.xy[1].min() - 0.8, p.xy[1].max() + 0.8)
+            ax.set_aspect("equal")
+            ax.set_title(title, loc="left")
+            ax.set_xlabel("x (m)")
+            if j == 0:
+                ax.set_ylabel("y (m)")
+        cax = fig.add_subplot(gs[1, :])
+        cb = fig.colorbar(plt.cm.ScalarMappable(norm=norm, cmap=cmap), cax=cax,
+                          orientation="horizontal")
+        cb.set_label(r"$|$curvature$|$ (m$^{-1}$)")
+        save(fig, "paths")
 
 
 if __name__ == "__main__":

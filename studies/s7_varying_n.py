@@ -30,7 +30,8 @@ import time
 import numpy as np
 import matplotlib.pyplot as plt
 
-from common import (C_GREY, C_LAST, C_PATH, LAPS, OUT, _writable, dump, save, seg_colours, seg_label,
+from common import (C_GREY, C_LAST, C_PATH, COL_W, LAPS, OUT, _writable, dump, paper_style, save,
+                    seg_colours, seg_label,
                     study_path, t_final_for, vehicle)
 
 from gntpf import (NMHE, ReferenceGenerator, RefGenWeights, SensorModel,  # noqa: E402
@@ -126,35 +127,44 @@ def traces(big, small, res1, res2, res_ref):
 
 
 def figure(path, big, small, T):
-    fig = plt.figure(figsize=(7.2, 3.0))
-    gs = fig.add_gridspec(1, 2, width_ratios=[1.15, 1.0], wspace=0.3)
+    """One column wide, drawn at its printed size."""
+    with paper_style():
+        fig = plt.figure(figsize=(COL_W, 3.25), layout="constrained")
+        gs = fig.add_gridspec(2, 1, height_ratios=[1.0, 1.25])
+        ax = fig.add_subplot(gs[0])
+        ax.plot(path.xy[0], path.xy[1], "--", color=C_PATH, lw=0.7, label="Nominal path")
+        c1 = seg_colours(big.N)
+        for i in range(big.N + 1):
+            ax.plot(T["P1"][i, 0], T["P1"][i, 1], color=c1[i], lw=0.7, alpha=0.45)
+        c2 = seg_colours(small.N)
+        for i in range(small.N + 1):
+            ax.plot(T["P2"][i, 0], T["P2"][i, 1], color=c2[i], lw=0.9)
+        ax.plot(T["P2"][0, 0, 0], T["P2"][0, 1, 0], "*", color="#111", ms=7, zorder=9,
+                label="Detachment")
+        ax.set_aspect("equal"); ax.set_xlabel("x (m)"); ax.set_ylabel("y (m)")
+        ax.set_title(f"$N$ = {big.N} (faint), then $N$ = {small.N}")
+        # inside the rectangle, the one clear area wide enough for the labels
+        ax.legend(loc="center", bbox_to_anchor=(0.0, 0.0), bbox_transform=ax.transData,
+                  frameon=False, handlelength=1.4, handletextpad=0.5)
 
-    ax = fig.add_subplot(gs[0, 0])
-    ax.plot(path.xy[0], path.xy[1], "--", color=C_PATH, lw=0.8, label="Nominal path")
-    c1 = seg_colours(big.N)
-    for i in range(big.N + 1):
-        ax.plot(T["P1"][i, 0], T["P1"][i, 1], color=c1[i], lw=0.8, alpha=0.55)
-    c2 = seg_colours(small.N)
-    for i in range(small.N + 1):
-        ax.plot(T["P2"][i, 0], T["P2"][i, 1], color=c2[i], lw=1.1)
-    ax.plot(T["P2"][0, 0, 0], T["P2"][0, 1, 0], "*", color="#111", ms=9, zorder=9,
-            label="Detachment")
-    ax.set_aspect("equal"); ax.set_xlabel("x (m)"); ax.set_ylabel("y (m)")
-    ax.set_title(f"N = {big.N} (faint) then N = {small.N}", fontsize=8.5)
-    ax.legend(fontsize=7, loc="upper left")
-
-    # Right: worst-segment deviation against the tractor's arc length, so that
-    # the detached vehicle and the comparison run are read at the same corners.
-    ax = fig.add_subplot(gs[0, 1])
-    ax.plot(T["sr"], T["wr"], color="#2B4C7E", lw=0.8, ls="--", label=f"N = {small.N} throughout")
-    ax.plot(T["s1"], T["w1"], color=C_GREY, lw=1.0, label=f"N = {big.N}")
-    ax.plot(T["s2"], T["w2"], color=C_LAST, lw=1.0, label=f"N = {small.N} after detachment")
-    ax.axvline(T["s2"][0], color="#111", ls=":", lw=1.0)
-    ax.set_xlim(path.eval_start - 2.0, path.eval_end + 2.0)
-    ax.set_xlabel("tractor arc length (m)"); ax.set_ylabel("worst-segment off-tracking (m)")
-    ax.legend(fontsize=6.5, loc="upper right", frameon=False)
-    ax.set_ylim(0.0, 1.3 * float(np.max(T["dmax"])))
-    save(fig, "s7_varying_n")
+        # worst-segment deviation against the tractor's arc length, so that the
+        # detached vehicle and the comparison run are read at the same corners
+        ax = fig.add_subplot(gs[1])
+        hr, = ax.plot(T["sr"], T["wr"], color="#2B4C7E", lw=0.8, ls="--",
+                      label=f"$N$ = {small.N} throughout")
+        h1, = ax.plot(T["s1"], T["w1"], color=C_GREY, lw=0.9, label=f"$N$ = {big.N}")
+        h2, = ax.plot(T["s2"], T["w2"], color=C_LAST, lw=0.9,
+                      label=f"$N$ = {small.N} after detachment")
+        ax.axvline(T["s2"][0], color="#111", ls=":", lw=0.9)
+        ax.set_xlim(path.eval_start - 2.0, path.eval_end + 2.0)
+        ax.set_xlabel("tractor arc length (m)"); ax.set_ylabel("worst-segment\noff-tracking (m)")
+        ax.set_ylim(0.0, 1.1 * float(np.max(T["dmax"])))
+        # two columns, filled column-wise: N = 4 and the run after detachment on
+        # the first row, the comparison run on the second
+        ax.legend([h1, hr, h2], [h.get_label() for h in (h1, hr, h2)], loc="lower center",
+                  bbox_to_anchor=(0.5, 1.0), ncol=2, frameon=False, handlelength=1.6,
+                  columnspacing=1.2)
+        save(fig, "s7_varying_n")
 
 
 if __name__ == "__main__":

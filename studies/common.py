@@ -79,6 +79,9 @@ C_REF = "#6E39A0"
 C_GREY = "#8A96A1"
 
 plt.rcParams.update({
+    # Named explicitly: an installation's matplotlibrc may put another family
+    # first, and the figures must not depend on the machine that drew them.
+    "font.family": "DejaVu Sans",
     "font.size": 9,
     "axes.labelsize": 9,
     "axes.titlesize": 9.5,
@@ -95,6 +98,10 @@ plt.rcParams.update({
     "savefig.bbox": "tight",
     "lines.linewidth": 1.2,
     "legend.frameon": False,
+    # Embed TrueType (Type 42) fonts: journal submission systems reject the
+    # Type 3 fonts that matplotlib writes into PDF and EPS files by default.
+    "pdf.fonttype": 42,
+    "ps.fonttype": 42,
 })
 
 
@@ -125,6 +132,36 @@ def _writable(path: str) -> str:
     if os.path.exists(path) and not os.access(path, os.W_OK):
         os.chmod(path, 0o644)
     return path
+
+
+# Printed sizes of an IEEE journal page: one column and the full text width.
+COL_W = 3.5
+TEXT_W = 7.16
+
+
+def paper_style(**extra):
+    """Matplotlib settings for a figure drawn at the size at which it is printed.
+
+    The figures of the paper are drawn at the width of one column or of the
+    full text and included without scaling, so that their labels print at the
+    font sizes set here: 9 pt, the size the IEEE graphics guidelines ask type to
+    have at full size, in a Helvetica-type face (Arial, or Liberation Sans, which
+    has the same metrics).  Mathematical text is set in the same face.
+    """
+    rc = {"font.family": "sans-serif",
+          "font.sans-serif": ["Arial", "Liberation Sans", "Helvetica", "TeX Gyre Heros",
+                              "DejaVu Sans"],
+          "mathtext.fontset": "custom", "mathtext.rm": "sans", "mathtext.it": "sans:italic",
+          "mathtext.bf": "sans:bold", "mathtext.sf": "sans", "mathtext.cal": "sans",
+          "font.size": 9, "axes.labelsize": 9, "axes.titlesize": 9, "legend.fontsize": 9,
+          "xtick.labelsize": 9, "ytick.labelsize": 9, "lines.linewidth": 1.0,
+          "axes.linewidth": 0.6, "grid.linewidth": 0.4, "xtick.major.width": 0.6,
+          "ytick.major.width": 0.6, "xtick.major.size": 2.5, "ytick.major.size": 2.5,
+          "xtick.major.pad": 2.0, "ytick.major.pad": 2.0, "axes.labelpad": 2.0,
+          "legend.handlelength": 1.6, "legend.borderaxespad": 0.3,
+          "savefig.bbox": "standard", "savefig.pad_inches": 0.0}
+    rc.update(extra)
+    return plt.rc_context(rc)
 
 
 def save(fig, name: str):

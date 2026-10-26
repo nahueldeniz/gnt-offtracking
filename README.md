@@ -109,6 +109,11 @@ separate data set: see `DATA.md` for the download, the layout of a log and the
 `GNT_FIELD_LOGS` variable. Both runners skip these studies when the logs are
 absent.
 
+`make_diagrams.py` draws the schematic figures, and `graphical_abstract.py` the
+graphical abstract (660 x 295 pixels) from the output of `s8_comparison.py`.
+The figures of the paper are drawn at the width at which they are printed, one
+column or the full text width, so that their labels print at 9 pt.
+
 ## Model
 
 State ordering, with `nq = 4N + 3`:
